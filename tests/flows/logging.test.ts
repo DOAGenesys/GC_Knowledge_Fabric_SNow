@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as callback from "@/app/api/auth/callback/route";
 import * as login from "@/app/api/auth/login/route";
 import * as connections from "@/app/api/connections/route";
@@ -80,15 +80,21 @@ describe("log volume", () => {
     expect(capturedLogs.withMessage("Article upload failed")).toHaveLength(1);
   });
 
-  it("keeps an idle scheduler quiet", async () => {
+  it("keeps an idle scheduler to one heartbeat an hour", async () => {
     world = await createWorld();
     process.env.LOG_LEVEL = "info";
     try {
       for (let tick = 0; tick < 10; tick += 1) await runTick();
+      expect(capturedLogs.records.map((record) => record.msg)).toEqual(["Scheduler is running, nothing due"]);
+
+      vi.setSystemTime(Date.now() + 61 * 60_000);
+      for (let tick = 0; tick < 4; tick += 1) await runTick();
+      expect(capturedLogs.withMessage("Scheduler is running, nothing due")).toHaveLength(2);
+      expect(capturedLogs.records).toHaveLength(2);
     } finally {
       process.env.LOG_LEVEL = "debug";
+      vi.useRealTimers();
     }
-    expect(capturedLogs.records).toHaveLength(0);
   });
 });
 

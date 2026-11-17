@@ -104,6 +104,7 @@ See [`.env.example`](.env.example) for a template.
 - One structured JSON line per event, with a `requestId` (also returned as the `x-request-id` response header), the operation name, the duration and the error code.
 - Credentials, tokens and article bodies are never logged.
 - Reads log at `debug`. Changes, rejected requests and run summaries log at `info`, failures at `warn` or `error`, so production logs stay readable.
+- Every scheduler tick that does work logs a summary. Idle ticks stay quiet apart from an hourly "Scheduler is running, nothing due" heartbeat, so you can confirm the schedule fires.
 
 **Browser console:**
 

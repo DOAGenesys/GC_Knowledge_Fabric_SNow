@@ -19,6 +19,10 @@ const log = scopedLogger("sync.scheduler");
 export const STALE_RUN_MINUTES = 20;
 export const MAX_RUN_MINUTES = 180;
 
+/** Idle ticks stay at debug level apart from this heartbeat, so the logs show the scheduler is alive. */
+const IDLE_HEARTBEAT_MS = 60 * 60_000;
+let lastIdleHeartbeatAt = 0;
+
 export type CheckOutcome =
   | { outcome: "started" | "already_running"; run: RunRow }
   | { outcome: "up_to_date"; run: RunRow | null; articleCount: number }
@@ -184,7 +188,13 @@ export async function runTick(options: { budgetMs?: number; batchSize?: number; 
   }
 
   summary.durationMs = Date.now() - started;
-  if (summary.checked > 0 || summary.recovered > 0) logger.info("Scheduler tick", { ...summary });
-  else logger.debug("Scheduler tick: nothing due", { durationMs: summary.durationMs });
+  if (summary.checked > 0 || summary.recovered > 0) {
+    logger.info("Scheduler tick", { ...summary });
+  } else if (Date.now() - lastIdleHeartbeatAt >= IDLE_HEARTBEAT_MS) {
+    lastIdleHeartbeatAt = Date.now();
+    logger.info("Scheduler is running, nothing due", { durationMs: summary.durationMs });
+  } else {
+    logger.debug("Scheduler tick: nothing due", { durationMs: summary.durationMs });
+  }
   return summary;
 }
