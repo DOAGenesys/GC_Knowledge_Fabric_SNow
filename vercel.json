@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "schedules": {
+    "sync-tick": {
+      "schedule": "*/15 * * * *",
+      "path": "/api/cron/tick",
+      "requestMethod": "GET"
+    }
+  }
+}
