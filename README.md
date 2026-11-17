@@ -71,8 +71,8 @@ The wizard suggests one based on the portals each knowledge base is published to
 
 ### 3. Deploy on Vercel
 
-1. Import the repository into a Vercel project (framework: Next.js).
-2. Add **Neon Postgres** from the Vercel Marketplace. It sets `DATABASE_URL`.
+1. Import the repository into a Vercel project (framework: Next.js). Functions run in Frankfurt (`fra1`, set in `vercel.json`). Change it if your users and Genesys Cloud org are elsewhere.
+2. Add **Neon Postgres** from the Vercel Marketplace, in the same region as the functions. It sets `DATABASE_URL`.
 3. Add `APP_SESSION_SECRET`, `APP_ENCRYPTION_KEY` and `CRON_SECRET` as **sensitive** environment variables. Each should be a random string of at least 32 characters, for example from `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`, piped straight into `vercel env add`. Never commit them.
 4. Deploy, then open `https://<your-app-host>/api/health`. It returns `"status": "ok"` when the configuration is complete and the database answers (HTTP 503 and `"degraded"` otherwise).
 5. Create the Genesys Cloud sign-in client with the deployment's redirect URI and sign in.
