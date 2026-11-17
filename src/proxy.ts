@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { GENESYS_REGIONS, loginHost } from "@/lib/regions";
 import { cookieNames, readSession } from "@/server/auth/session";
 
 /**
@@ -10,6 +11,9 @@ import { cookieNames, readSession } from "@/server/auth/session";
 
 const PUBLIC_PAGES = new Set(["/login"]);
 
+/** Browsers apply form-action to every redirect after a form submit, and sign-in redirects to the region's login host. */
+const FORM_ACTION_SOURCES = ["'self'", ...GENESYS_REGIONS.map((region) => `https://${loginHost(region.host)}`)].join(" ");
+
 function buildCsp(nonce: string, isDev: boolean): string {
   return [
     "default-src 'self'",
@@ -20,7 +24,7 @@ function buildCsp(nonce: string, isDev: boolean): string {
     `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
     "frame-ancestors 'none'",
     "base-uri 'self'",
-    "form-action 'self'",
+    `form-action ${FORM_ACTION_SOURCES}`,
     "object-src 'none'",
     ...(isDev ? [] : ["upgrade-insecure-requests"]),
   ].join("; ");
