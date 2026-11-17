@@ -188,6 +188,8 @@ describe("ServiceNow client", () => {
     const error = await failure(get(oauth));
     expect(error.code).toBe("SN_AUTH_FAILED");
     expect(error.detail).toContain("client credentials grant");
+    expect(error.hint).toContain("glide.oauth.inbound.client.credential.grant_type.enabled");
+    expect(error.hint).toContain("OAuth Application User");
 
     snHandler = (_request, url) => (url.pathname === "/oauth_token.do" ? json({ token: "wrong shape" }) : json({ result: [] }));
     expect((await failure(get(oauth))).code).toBe("SN_AUTH_FAILED");
@@ -196,6 +198,17 @@ describe("ServiceNow client", () => {
       throw new TypeError("fetch failed");
     };
     expect((await failure(get(oauth))).code).toBe("SN_UNREACHABLE");
+  });
+
+  it("points a rejected API key at the REST API access policy", async () => {
+    snHandler = () => json({ error: { message: "User Not Authenticated" } }, 401);
+    const rejectedKey = await failure(get(apikey));
+    expect(rejectedKey.code).toBe("SN_AUTH_FAILED");
+    expect(rejectedKey.hint).toContain("REST API access policy");
+
+    const rejectedPassword = await failure(get(basic));
+    expect(rejectedPassword.code).toBe("SN_AUTH_FAILED");
+    expect(rejectedPassword.hint).not.toContain("access policy");
   });
 
   it("spots sleeping developer instances", async () => {

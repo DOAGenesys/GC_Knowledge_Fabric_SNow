@@ -53,6 +53,8 @@ async function getOAuthToken(connection: SnConnection, forceRefresh: boolean, lo
   }
   if (response.status === 400 || response.status === 401) {
     throw new AppError("SN_AUTH_FAILED", {
+      hint:
+        "Check the OAuth client ID and secret. The instance must allow the client credentials grant (system property glide.oauth.inbound.client.credential.grant_type.enabled set to true), and the OAuth client needs an OAuth Application User.",
       detail: `sn.oauthToken → HTTP ${response.status}. Check the OAuth client and that the client credentials grant is enabled on the instance.`,
     });
   }
@@ -76,12 +78,15 @@ async function authHeaders(connection: SnConnection, forceRefresh: boolean, log:
   }
 }
 
-export function mapSnError(response: Pick<HttpResponse, "status" | "json" | "headers">, operation: string): AppError {
+const API_KEY_REJECTED_HINT =
+  "Check that the API key is active and that a REST API access policy applies its authentication profile to the Table API. API keys only work on APIs covered by such a policy.";
+
+export function mapSnError(response: Pick<HttpResponse, "status" | "json" | "headers">, operation: string, authType?: SnCredentials["type"]): AppError {
   const body = response.json<{ error?: { message?: unknown; detail?: unknown } }>();
   const message = typeof body?.error?.message === "string" ? body.error.message.slice(0, 300) : undefined;
   const detail = `${operation} → HTTP ${response.status}${message ? `: ${message}` : ""}`;
   const status = response.status;
-  if (status === 401) return new AppError("SN_AUTH_FAILED", { detail });
+  if (status === 401) return new AppError("SN_AUTH_FAILED", { detail, ...(authType === "apikey" ? { hint: API_KEY_REJECTED_HINT } : {}) });
   if (status === 403) return new AppError("SN_PERMISSION_DENIED", { detail });
   if (status === 404) return new AppError("SN_NOT_FOUND", { detail });
   if (status === 429) return new AppError("SN_RATE_LIMITED", { detail });
@@ -146,7 +151,7 @@ export async function snGet<T>(connection: SnConnection, options: SnRequestOptio
       }
       throw new AppError("SN_HIBERNATING", { detail: `${options.operation} redirected to ${target}` });
     }
-    if (!response.ok) throw mapSnError(response, options.operation);
+    if (!response.ok) throw mapSnError(response, options.operation, connection.credentials.type);
 
     const contentType = (response.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
     if (!contentType.includes("json")) {

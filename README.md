@@ -47,6 +47,8 @@ The ServiceNow account needs:
 - Permission to read every knowledge base you sync (each knowledge base's "Can read" user criteria).
 - Optionally, the Knowledge Management REST API plugin (`sn_km_api`), so template-based articles sync with their full body.
 
+Syncs include published, active articles whose "Valid to" date hasn't passed. Articles with an empty "Valid to" are included as well, although ServiceNow's own search hides them. Add `valid_toISNOTEMPTY` to a sync's filter to leave them out.
+
 Authentication options:
 
 - **Basic:** username and password of an integration user.
@@ -54,7 +56,10 @@ Authentication options:
   1. Set the system property `glide.oauth.inbound.client.credential.grant_type.enabled` to `true`.
   2. Create an OAuth API endpoint for external clients.
   3. Set its **OAuth Application User** to the integration user.
-- **API key** (Washington DC and later): a REST API key with an inbound authentication profile. The app sends it in the `x-sn-apikey` header.
+- **API key** (Washington DC and later):
+  1. Create an inbound authentication profile of type API key (header `x-sn-apikey`).
+  2. Create a REST API key for the integration user.
+  3. Create a REST API access policy that applies the profile to the Table API. API keys only work on APIs covered by such a policy, so also add the Aggregate API (article counts) and the Knowledge Management API (template articles).
 
 Article links point to the portal your agents and customers use. Portal links have the form `https://<instance>/<portal>?id=kb_article_view&sysparm_article=KB0010001`:
 
