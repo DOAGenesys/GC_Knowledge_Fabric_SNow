@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: "Sign in" };
 const FEATURES = [
   {
     icon: "connect" as const,
-    title: "CSM and ITSM knowledge bases",
+    title: "Customer and employee knowledge",
     text: "Pick the knowledge bases you need. Only published, current articles reach Genesys Cloud.",
   },
   {
@@ -32,7 +32,7 @@ const SIGN_IN_CODES = new Set(["GC_LOGIN_FAILED", "ORG_NOT_ALLOWED", "GC_KNOWLED
 function noticeFor(code: string | null): LoginNotice | null {
   if (!code) return null;
   if (code === "UNAUTHENTICATED") return { tone: "info", title: "Please sign in again", message: "Your session ended. Sign in to pick up where you left off." };
-  if (code === "VALIDATION") return { tone: "danger", title: "Check the sign-in details", message: "Pick a region and enter the OAuth client ID of the sign-in client." };
+  if (code === "VALIDATION") return { tone: "danger", title: "Check the sign-in details", message: "Pick your region and enter the sign-in client ID." };
   if (code === "GC_PERMISSION_DENIED") {
     return {
       tone: "danger",

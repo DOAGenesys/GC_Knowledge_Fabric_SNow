@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Ban, RefreshCw, RotateCcw, Wrench } from "lucide-react";
+import { ArrowLeft, Ban, RefreshCw, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { apiFetch, isApiError } from "@/lib/api-client";
@@ -12,7 +12,6 @@ import { AUDIENCE, HEALTH } from "@/lib/ui-text";
 import { Chip, StatusBadge } from "../ui/badge";
 import { Button, ButtonLink } from "../ui/button";
 import { Callout, ErrorCallout } from "../ui/callout";
-import { ConfirmDialog } from "../ui/dialog";
 import { EmptyState, Skeleton } from "../ui/feedback";
 import { Switch } from "../ui/field";
 import { TabPanel, Tabs } from "../ui/tabs";
@@ -95,7 +94,6 @@ export function SyncDetail({ id }: { id: string }) {
   const toast = useToast();
   const [tab, setTab] = useState<TabId>("activity");
   const [articleFilter, setArticleFilter] = useState<ArticleState | "all">("all");
-  const [confirmFull, setConfirmFull] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const sync = data?.sync;
@@ -179,7 +177,7 @@ export function SyncDetail({ id }: { id: string }) {
             {!sync.enabled && automatic ? <StatusBadge tone="warning">Paused</StatusBadge> : null}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-            <Chip>{AUDIENCE[sync.audience].label}</Chip>
+            <Chip>{AUDIENCE[sync.audience].short}</Chip>
             <FlowLine from={`${sync.connection.name} · ${sync.kbNames.join(", ")}`} to={sync.source.name} />
           </div>
         </div>
@@ -188,11 +186,7 @@ export function SyncDetail({ id }: { id: string }) {
             <Button onClick={cancel} loading={cancelling} disabled={sync.activeRun.cancelRequested} icon={<Ban className="size-4" aria-hidden />}>
               {sync.activeRun.cancelRequested ? "Cancelling…" : "Cancel run"}
             </Button>
-          ) : (
-            <Button onClick={() => setConfirmFull(true)} icon={<Wrench className="size-4" aria-hidden />}>
-              Full rebuild
-            </Button>
-          )}
+          ) : null}
           <Button variant="primary" onClick={() => void syncNow(sync)} loading={pending === sync.id} disabled={Boolean(sync.activeRun)} icon={<RefreshCw className="size-4" aria-hidden />}>
             Sync now
           </Button>
@@ -212,12 +206,12 @@ export function SyncDetail({ id }: { id: string }) {
         <section className="animate-fade-in rounded-2xl bg-white p-6 shadow-card ring-1 ring-azure/20" aria-live="polite">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-2 text-[13px] text-navy/55">
             <span>
-              {sync.activeRun.mode === "full" ? "Full rebuild" : "Sync"} started {formatRelative(sync.activeRun.startedAt)}
+              {sync.activeRun.mode === "full" ? "Full re-upload" : "Sync"} started {formatRelative(sync.activeRun.startedAt)}
               {sync.activeRun.requestedBy ? ` by ${sync.activeRun.requestedBy}` : ""}
             </span>
             {sync.activeRun.plannedUploads + sync.activeRun.plannedDeletions > 0 ? (
               <span>
-                {plural(sync.activeRun.plannedUploads, "upload")} · {plural(sync.activeRun.plannedDeletions, "removal")} planned
+                {plural(sync.activeRun.plannedUploads, "article")} to upload · {plural(sync.activeRun.plannedDeletions, "article")} to remove
               </span>
             ) : null}
           </div>
@@ -262,20 +256,6 @@ export function SyncDetail({ id }: { id: string }) {
           {tab === "settings" ? <SettingsTab key={sync.id} sync={sync} /> : null}
         </TabPanel>
       </div>
-
-      <ConfirmDialog
-        open={confirmFull}
-        onClose={() => setConfirmFull(false)}
-        onConfirm={async () => {
-          const result = await syncNow(sync, "full");
-          if (!result) throw new Error("not started");
-        }}
-        title="Run a full rebuild?"
-        confirmLabel="Start full rebuild"
-      >
-        <p>Every article is uploaded again and Genesys Cloud replaces the whole source in one go. Use it after changing article templates, or if the source was edited by hand.</p>
-        <p>Regular syncs only send what changed, so you rarely need this.</p>
-      </ConfirmDialog>
     </div>
   );
 }

@@ -32,7 +32,7 @@ import {
 import { buildRunUpdate, getRunById, isRunFinished, mapRun, pruneRunHistory, type RunRow, updateRun } from "../repo/runs";
 import { getSyncById, type SyncRow } from "../repo/syncs";
 import type { SnConnection } from "../servicenow/client";
-import { type ArticleContent, fetchArticleContents, listArticleSummaries } from "../servicenow/knowledge";
+import { type ArticleContent, articleFilters, fetchArticleContents, listArticleSummaries } from "../servicenow/knowledge";
 import { resolveConnectionById } from "../services/connections";
 import { getOrgGcAuth } from "../services/genesys";
 import { buildArticleDocument, CONTENT_TYPE } from "./document";
@@ -132,7 +132,7 @@ export async function prepareRun(runId: string): Promise<PrepareResult> {
   await clearRunItems(runId);
 
   const connection = await resolveConnectionById(sync.connectionId);
-  const articles = await listArticleSummaries(connection, { kbIds: sync.kbIds, filter: sync.filterQuery }, ctx.log);
+  const articles = await listArticleSummaries(connection, { kbIds: sync.kbIds, filter: articleFilters(sync.filters, sync.filterQuery) }, ctx.log);
   const manifest = await loadManifest(sync.id);
   // ServiceNow answers an account that lost read access with an empty list, not an error.
   if (articles.length === 0 && run.mode === "incremental" && manifest.some((entry) => entry.state === "synced")) {

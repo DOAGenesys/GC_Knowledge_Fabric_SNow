@@ -184,7 +184,7 @@ describe("authentication and request safety", () => {
 
     const names = cookieNames();
     const token = browser.cookies[names.session]!;
-    const tampered = `${token.slice(0, -2)}${token.endsWith("A") ? "B" : "A"}${token.slice(-1)}`;
+    const tampered = `${token.slice(0, -2)}${token.at(-2) === "A" ? "B" : "A"}${token.slice(-1)}`;
     expect((await browser.call(syncs.GET, "/api/syncs", { cookies: { [names.session]: tampered } })).status).toBe(401);
   });
 

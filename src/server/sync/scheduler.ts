@@ -8,7 +8,7 @@ import { type Logger, scopedLogger } from "../log";
 import { countManifestIssues } from "../repo/items";
 import { insertFinishedRun, listStaleRuns, type RunRow } from "../repo/runs";
 import { claimDueSyncs, markSyncChecked, setSyncOutcome, type SyncRow } from "../repo/syncs";
-import { listArticleSummaries } from "../servicenow/knowledge";
+import { articleFilters, listArticleSummaries } from "../servicenow/knowledge";
 import { resolveConnectionById } from "../services/connections";
 import { finishRun } from "./engine";
 import { computeConfigHash, computeFingerprint } from "./fingerprint";
@@ -43,7 +43,7 @@ export async function checkSync(
   let issues: number;
   try {
     const connection = await resolveConnectionById(sync.connectionId);
-    const articles = await listArticleSummaries(connection, { kbIds: sync.kbIds, filter: sync.filterQuery }, logger);
+    const articles = await listArticleSummaries(connection, { kbIds: sync.kbIds, filter: articleFilters(sync.filters, sync.filterQuery) }, logger);
     const configHash = computeConfigHash({ instanceUrl: connection.instanceUrl, audience: sync.audience, linkStyle: sync.linkStyle, linkCustom: sync.linkCustom });
     fingerprint = computeFingerprint(articles, configHash);
     articleCount = articles.length;

@@ -8,12 +8,12 @@ import { apiFetch, isApiError } from "@/lib/api-client";
 import type { GcCredentialsDTO } from "@/lib/api-types";
 import { formatRelative } from "@/lib/format";
 import { useGcCredentials } from "@/lib/hooks";
-import { GC_PERMISSIONS } from "@/lib/ui-text";
+import { gcAdminRequest, GC_PERMISSIONS } from "@/lib/ui-text";
 import { StatusBadge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Callout, ErrorCallout } from "../ui/callout";
 import { Card } from "../ui/card";
-import { CopyButton } from "../ui/copy-button";
+import { CopyButton, CopyTextButton } from "../ui/copy-button";
 import { ConfirmDialog } from "../ui/dialog";
 import { Skeleton } from "../ui/feedback";
 import { Field, Input } from "../ui/field";
@@ -24,7 +24,7 @@ function PermissionList() {
   return (
     <div className="rounded-xl bg-nimbus p-4">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium text-navy">Permissions for the client&apos;s role</p>
+        <p className="text-sm font-medium text-navy">Permissions the role needs</p>
         <CopyButton value={required.join("\n")} label="Copy required permissions" />
       </div>
       <ul className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2">
@@ -32,7 +32,7 @@ function PermissionList() {
           <li key={permission.name} className="flex items-center gap-2 text-[13px]">
             <ShieldCheck className={permission.optional ? "size-3.5 text-navy/35" : "size-3.5 text-patina-ink"} aria-hidden />
             <code className="font-mono text-[12px] text-navy/80">{permission.name}</code>
-            {permission.optional ? <span className="text-[11px] text-navy/45">optional</span> : null}
+            {permission.optional ? <span className="text-[11px] text-navy/45">optional, shows file counts</span> : null}
           </li>
         ))}
       </ul>
@@ -81,14 +81,14 @@ function CredentialsForm({ onSaved, onCancel }: { onSaved: (credentials: GcCrede
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" variant="secondary" loading={saving} disabled={!clientId.trim() || !clientSecret}>
-          {saving ? "Verifying…" : "Verify and save"}
+          {saving ? "Checking…" : "Check and save"}
         </Button>
         {onCancel ? (
           <Button variant="ghost" onClick={onCancel} disabled={saving}>
             Cancel
           </Button>
         ) : null}
-        <span className="text-[13px] text-navy/50">We check the organization and permissions before saving.</span>
+        <span className="text-[13px] text-navy/50">We check that it belongs to your organization and has the right permissions.</span>
       </div>
     </form>
   );
@@ -107,7 +107,7 @@ export function GenesysCredentialsCard() {
     await mutate({ credentials: next }, { revalidate: false });
     await mutateGlobal("/api/session");
     setEditing(false);
-    toast.success("Genesys Cloud credentials saved", "Background syncs will use this OAuth client.");
+    toast.success("Genesys Cloud access saved", "Syncs will use this OAuth client.");
   }
 
   async function remove() {
@@ -115,9 +115,9 @@ export function GenesysCredentialsCard() {
       const result = await apiFetch<{ credentials: GcCredentialsDTO }>("/api/genesys/credentials", { method: "DELETE" });
       await mutate(result, { revalidate: false });
       await mutateGlobal("/api/session");
-      toast.success("Credentials removed", "Scheduled syncs pause until you add new credentials.");
+      toast.success("Access removed", "Syncs pause until someone adds an OAuth client again.");
     } catch (caught) {
-      toast.error(caught, "Couldn't remove the credentials");
+      toast.error(caught, "Couldn't remove the access");
       throw caught;
     }
   }
@@ -129,9 +129,9 @@ export function GenesysCredentialsCard() {
           <Image src="/brand/genesys-cloud-mark.svg" alt="" width={26} height={17} unoptimized />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold tracking-tight">Genesys Cloud sync credentials</h2>
+          <h2 className="text-lg font-semibold tracking-tight">Genesys Cloud access for syncs</h2>
           <p className="mt-1 text-sm text-navy/60">
-            A Client Credentials OAuth client in your organization. Syncs use it to manage knowledge sources and upload articles, even when nobody is signed in.
+            Syncs run in the background, even when nobody is signed in, so they need their own access to Genesys Cloud. A Genesys Cloud admin sets this up once for your organization.
           </p>
         </div>
         {status === "ok" ? (
@@ -169,9 +169,9 @@ export function GenesysCredentialsCard() {
         ) : null}
 
         {status === "error" && !editing ? (
-          <Callout tone="danger" title="These credentials stopped working">
+          <Callout tone="danger" title="This access stopped working">
             <p>{credentials?.message ?? "Genesys Cloud rejected the OAuth client."}</p>
-            <p className="text-navy/65">Replace them with a working client. Syncs retry automatically once they&apos;re fixed.</p>
+            <p className="text-navy/65">Replace it with a working OAuth client. Syncs retry automatically once it&apos;s fixed.</p>
           </Callout>
         ) : null}
 
@@ -179,31 +179,33 @@ export function GenesysCredentialsCard() {
           <>
             <ol className="list-decimal space-y-1.5 pl-5 text-sm leading-relaxed text-navy/70 marker:text-navy/40">
               <li>
-                In Genesys Cloud, open <strong className="font-medium text-navy">Admin → Integrations → OAuth</strong> and add a client with the{" "}
-                <strong className="font-medium text-navy">Client Credentials</strong> grant.
+                Create a role with the permissions below (<strong className="font-medium text-navy">Admin → Roles / Permissions</strong>).
               </li>
-              <li>Assign it a role with the permissions below, in your home division.</li>
+              <li>
+                Add an OAuth client with the <strong className="font-medium text-navy">Client Credentials</strong> grant and give it that role in your home division (
+                <strong className="font-medium text-navy">Admin → Integrations → OAuth</strong>).
+              </li>
               <li>Paste the client ID and secret here.</li>
             </ol>
+            <div className="flex flex-wrap items-center gap-3">
+              <CopyTextButton value={gcAdminRequest()}>Copy a request for your Genesys Cloud admin</CopyTextButton>
+              <span className="text-[13px] text-navy/50">Not an admin? Send this to one.</span>
+            </div>
             <PermissionList />
             <CredentialsForm onSaved={saved} onCancel={editing ? () => setEditing(false) : undefined} />
           </>
         ) : null}
-
-        <p className="text-[13px] leading-relaxed text-navy/50">
-          Why a second OAuth client? Signing in only proves who you are. Scheduled syncs run without a signed-in user, so they need their own credentials.
-        </p>
       </div>
 
       <ConfirmDialog
         open={confirmRemove}
         onClose={() => setConfirmRemove(false)}
         onConfirm={remove}
-        title="Remove Genesys Cloud credentials?"
-        confirmLabel="Remove credentials"
+        title="Remove Genesys Cloud access?"
+        confirmLabel="Remove access"
         tone="danger"
       >
-        <p>Scheduled and manual syncs can&apos;t run until you add credentials again. Knowledge already in Genesys Cloud is not affected.</p>
+        <p>No sync can run until someone adds an OAuth client again. Articles already in Genesys Cloud stay where they are.</p>
       </ConfirmDialog>
     </Card>
   );

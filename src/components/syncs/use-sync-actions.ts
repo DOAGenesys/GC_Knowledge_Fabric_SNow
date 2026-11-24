@@ -23,7 +23,7 @@ export function useSyncNow() {
     try {
       const result = await apiFetch<RunNowResult>(`/api/syncs/${sync.id}/run`, { method: "POST", body: { mode } });
       if (result.outcome === "started") {
-        toast.success(mode === "full" ? "Full rebuild started" : "Sync started", "Progress updates live here.");
+        toast.success(mode === "full" ? "Full re-upload started" : "Sync started", "Progress updates live on the sync's page.");
       } else if (result.outcome === "up_to_date") {
         toast.success("Already up to date", `Nothing changed in ServiceNow since the last sync of ${sync.name}.`);
       } else {

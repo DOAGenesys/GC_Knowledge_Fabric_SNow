@@ -3,8 +3,10 @@
 import useSWR from "swr";
 import { swrFetcher } from "./api-client";
 import type {
+  ArticleOptionDTO,
   ArticlePage,
   ConnectionDTO,
+  FilterOptionsDTO,
   GcCredentialsDTO,
   GcSourceDTO,
   KnowledgeBaseDTO,
@@ -62,6 +64,25 @@ export function useGcCredentials() {
 
 export function useGcSources(enabled: boolean) {
   return useSWR<{ sources: GcSourceDTO[] }>(enabled ? "/api/genesys/sources" : null, swrFetcher, { revalidateOnFocus: false });
+}
+
+export function useFilterOptions(connectionId: string | null, kbIds: string[]) {
+  const kbKey = [...kbIds].sort().join(",");
+  return useSWR<{ options: FilterOptionsDTO }>(connectionId && kbKey ? `/api/connections/${connectionId}/filter-options?kb=${kbKey}` : null, swrFetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+    keepPreviousData: true,
+  });
+}
+
+export function useArticleSearch(connectionId: string | null, kbIds: string[], text: string) {
+  const kbKey = [...kbIds].sort().join(",");
+  const query = new URLSearchParams({ kb: kbKey, q: text.trim() });
+  return useSWR<{ articles: ArticleOptionDTO[]; more: boolean }>(connectionId && kbKey ? `/api/connections/${connectionId}/articles?${query}` : null, swrFetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+    keepPreviousData: true,
+  });
 }
 
 export function useKnowledgeBases(connectionId: string | null) {

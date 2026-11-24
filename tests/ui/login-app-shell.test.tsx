@@ -12,8 +12,8 @@ import { blockStorage } from "./helpers/storage";
 const CLIENT_ID = "1a2b3c4d-1234-4567-89ab-def012345678";
 const REDIRECT = "http://localhost:3000/api/auth/callback";
 
-function renderLogin(notice: LoginNotice | null = null) {
-  const view = render(<LoginForm notice={notice} returnTo="/syncs/abc" redirectUri={REDIRECT} defaultRegion="mypurecloud.com" defaultClientId="" />);
+function renderLogin(notice: LoginNotice | null = null, defaultClientId = "") {
+  const view = render(<LoginForm notice={notice} returnTo="/syncs/abc" redirectUri={REDIRECT} defaultRegion="mypurecloud.com" defaultClientId={defaultClientId} />);
   const form = view.container.querySelector("form")!;
   form.addEventListener("submit", (event) => event.preventDefault());
   return { ...view, form };
@@ -26,17 +26,17 @@ describe("LoginForm", () => {
     expect(form.getAttribute("method")).toBe("get");
     expect((form.querySelector("input[name='returnTo']") as HTMLInputElement).value).toBe("/syncs/abc");
 
-    fireEvent.change(screen.getByLabelText("OAuth client ID"), { target: { value: "my-client" } });
+    fireEvent.change(screen.getByLabelText("Sign-in client ID"), { target: { value: "my-client" } });
     fireEvent.submit(form);
-    expect(screen.getByText(/Enter the OAuth client ID: a GUID like/)).toBeTruthy();
-    expect(screen.getByLabelText("OAuth client ID").getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByText(/^Enter the sign-in client ID\. It looks like/)).toBeTruthy();
+    expect(screen.getByLabelText("Sign-in client ID").getAttribute("aria-invalid")).toBe("true");
     expect(window.localStorage.getItem("kf:login")).toBeNull();
   });
 
   it("remembers the region and client ID for next time", () => {
     const { form, unmount } = renderLogin();
     fireEvent.change(screen.getByLabelText("Region"), { target: { value: "mypurecloud.de" } });
-    fireEvent.change(screen.getByLabelText("OAuth client ID"), { target: { value: ` ${CLIENT_ID} ` } });
+    fireEvent.change(screen.getByLabelText("Sign-in client ID"), { target: { value: ` ${CLIENT_ID} ` } });
     fireEvent.submit(form);
     expect(JSON.parse(window.localStorage.getItem("kf:login") ?? "{}")).toEqual({ region: "mypurecloud.de", clientId: CLIENT_ID });
     expect(screen.getByRole("button", { name: /Continue to Genesys Cloud/ }).getAttribute("aria-busy")).toBe("true");
@@ -44,21 +44,40 @@ describe("LoginForm", () => {
 
     renderLogin();
     expect((screen.getByLabelText("Region") as HTMLSelectElement).value).toBe("mypurecloud.de");
-    expect((screen.getByLabelText("OAuth client ID") as HTMLInputElement).value).toBe(CLIENT_ID);
+    expect((screen.getByLabelText("Sign-in client ID") as HTMLInputElement).value).toBe(CLIENT_ID);
+  });
+
+  it("hides a client ID the app already knows, until someone wants another one", () => {
+    const { form } = renderLogin(null, CLIENT_ID);
+    expect(screen.queryByLabelText("Sign-in client ID")).toBeNull();
+    expect((form.querySelector("input[type='hidden'][name='clientId']") as HTMLInputElement).value).toBe(CLIENT_ID);
+    fireEvent.submit(form);
+    expect(JSON.parse(window.localStorage.getItem("kf:login") ?? "{}")).toEqual({ region: "mypurecloud.com", clientId: CLIENT_ID });
+
+    fireEvent.click(screen.getByRole("button", { name: "Use a different sign-in client" }));
+    expect((screen.getByLabelText("Sign-in client ID") as HTMLInputElement).value).toBe(CLIENT_ID);
+    expect(screen.queryByRole("button", { name: "Use a different sign-in client" })).toBeNull();
+  });
+
+  it("shows the field when the remembered client ID differs from the app's", () => {
+    const other = "9f8e7d6c-1234-4567-89ab-def012345678";
+    window.localStorage.setItem("kf:login", JSON.stringify({ region: "mypurecloud.de", clientId: other }));
+    renderLogin(null, CLIENT_ID);
+    expect((screen.getByLabelText("Sign-in client ID") as HTMLInputElement).value).toBe(other);
   });
 
   it("ignores remembered values it can't use", () => {
     window.localStorage.setItem("kf:login", JSON.stringify({ region: "evil.example.com", clientId: "nope" }));
     renderLogin();
     expect((screen.getByLabelText("Region") as HTMLSelectElement).value).toBe("mypurecloud.com");
-    expect((screen.getByLabelText("OAuth client ID") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Sign-in client ID") as HTMLInputElement).value).toBe("");
   });
 
   it("survives corrupt or blocked storage", () => {
     window.localStorage.setItem("kf:login", "{not json");
     const { form } = renderLogin();
     blockStorage();
-    fireEvent.change(screen.getByLabelText("OAuth client ID"), { target: { value: CLIENT_ID } });
+    fireEvent.change(screen.getByLabelText("Sign-in client ID"), { target: { value: CLIENT_ID } });
     expect(() => fireEvent.submit(form)).not.toThrow();
   });
 
@@ -77,7 +96,7 @@ describe("LoginForm", () => {
 
   it("explains the OAuth client setup with a copyable redirect URI", async () => {
     renderLogin();
-    expect(screen.getByText("First time here? Set up the OAuth client")).toBeTruthy();
+    expect(screen.getByText("Setting up this app for the first time? (for admins)")).toBeTruthy();
     expect(screen.getByText(REDIRECT)).toBeTruthy();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Copy redirect URI" })));
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(REDIRECT);

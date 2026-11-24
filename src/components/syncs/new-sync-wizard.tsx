@@ -7,10 +7,11 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useSWRConfig } from "swr";
 import { apiFetch, isApiError } from "@/lib/api-client";
 import type { Audience, LinkStyle, RunDTO, SyncDTO } from "@/lib/api-types";
+import { describeFilters, filtersForKbs, noFilters, type SyncFilters } from "@/lib/filters";
 import { truncate } from "@/lib/format";
-import { useConnections, useGcCredentials, useKnowledgeBases } from "@/lib/hooks";
+import { useConnections, useGcCredentials, useGcSources, useKnowledgeBases } from "@/lib/hooks";
 import { describeSchedule, type Schedule } from "@/lib/schedule";
-import { AUDIENCE, LINK_STYLES } from "@/lib/ui-text";
+import { AUDIENCE, linkStyleLabel } from "@/lib/ui-text";
 import { Button, ButtonLink } from "../ui/button";
 import { Callout, ErrorCallout } from "../ui/callout";
 import { Card } from "../ui/card";
@@ -31,13 +32,13 @@ import {
 } from "./sync-fields";
 
 const STEPS = [
-  { title: "Knowledge", description: "What to sync" },
-  { title: "Destination", description: "Where it goes" },
+  { title: "Articles", description: "What to sync" },
+  { title: "Destination", description: "Where they go" },
   { title: "Schedule", description: "When it runs" },
 ] as const;
 
 const FIELD_STEP: Array<[RegExp, number]> = [
-  [/^(connectionId|knowledgeBases|filterQuery|audience)/, 0],
+  [/^(connectionId|knowledgeBases|filters|filterQuery|audience)/, 0],
   [/^(source|linkStyle|linkCustom)/, 1],
   [/^(name|schedule|enabled)/, 2],
 ];
@@ -87,6 +88,15 @@ function ReviewRow({ label, children }: { label: string; children: ReactNode }) 
   );
 }
 
+function SectionHeading({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div>
+      <h2 className="text-base font-semibold text-navy">{title}</h2>
+      {children ? <p className="text-sm text-navy/55">{children}</p> : null}
+    </div>
+  );
+}
+
 export function NewSyncWizard() {
   const router = useRouter();
   const toast = useToast();
@@ -99,7 +109,9 @@ export function NewSyncWizard() {
   const [connectionChoice, setConnectionChoice] = useState<string | null>(null);
   const [kbs, setKbs] = useState<SelectedKb[]>([]);
   const [audienceOverride, setAudienceOverride] = useState<Audience | null>(null);
+  const [filters, setFilters] = useState<SyncFilters>(noFilters);
   const [filterQuery, setFilterQuery] = useState("");
+  const [sampleArticle, setSampleArticle] = useState<string | null>(null);
   const [sourceOverride, setSourceOverride] = useState<SourceChoice | null>(null);
   const [linkOverride, setLinkOverride] = useState<{ linkStyle: LinkStyle; linkCustom: string } | null>(null);
   const [nameOverride, setNameOverride] = useState<string | null>(null);
@@ -116,32 +128,42 @@ export function NewSyncWizard() {
   const connection = connectionList.find((item) => item.id === connectionId) ?? null;
   const knowledgeBases = useKnowledgeBases(connectionId).data?.knowledgeBases ?? [];
   const pickedDetails = knowledgeBases.filter((kb) => kbs.some((item) => item.id === kb.id));
+  const portals = useMemo(() => [...new Set(pickedDetails.flatMap((kb) => kb.portals))], [pickedDetails]);
 
   const suggestedAudience = useMemo(() => {
     const suggestions = new Set(pickedDetails.map((kb) => kb.suggestedAudience).filter(Boolean));
     return suggestions.size === 1 ? ([...suggestions][0] as Audience) : null;
   }, [pickedDetails]);
   const audience = audienceOverride ?? suggestedAudience ?? "csm";
-  const link = linkOverride ?? suggestLinkStyle(audience, pickedDetails.flatMap((kb) => kb.portals));
+  const link = linkOverride ?? suggestLinkStyle(audience, portals);
   const source: SourceChoice = sourceOverride ?? { mode: "new", name: truncate(`ServiceNow - ${kbs.map((kb) => kb.title).join(", ")}`, 100) };
   const name = nameOverride ?? defaultSyncName(kbs);
   const gcReady = credentials.data?.credentials.status === "ok";
+  const gcSources = useGcSources(gcReady && step > 0);
+  const instanceUrl = connection?.instanceUrl ?? "https://your-instance.service-now.com";
 
   const serverField = (path: string) => (isApiError(error) ? error.fieldError(path) : undefined);
   const fieldError = (path: string) => localErrors[path] ?? serverField(path);
   const generalError = error && !(isApiError(error) && error.code === "VALIDATION" && error.fields.length > 0) ? error : null;
+  const filterSummary = [describeFilters(filters), filterQuery.trim() ? "a ServiceNow condition" : null].filter(Boolean).join(" · ");
+
+  function changeKbs(next: SelectedKb[]) {
+    setKbs(next);
+    setFilters((current) => filtersForKbs(current, next.map((kb) => kb.id)));
+  }
 
   function validate(target: number): boolean {
     const problems: Record<string, string> = {};
     if (target === 0) {
-      if (!connectionId) problems.connectionId = "Add a ServiceNow connection first.";
+      if (!connectionId) problems.connectionId = "Connect ServiceNow first.";
       if (kbs.length === 0) problems.knowledgeBases = "Pick at least one knowledge base.";
       if (kbs.length > 25) problems.knowledgeBases = "Pick at most 25 knowledge bases.";
+      if (kbs.length > 0 && filters.articles?.length === 0) problems["filters.articles"] = "Choose at least one article, or switch to all published articles.";
     }
     if (target === 1) {
-      if (source.mode === "new" && !source.name.trim()) problems["source.name"] = "Name the new source.";
+      if (source.mode === "new" && !source.name.trim()) problems["source.name"] = "Give the knowledge source a name.";
       if (source.mode === "existing" && !source.id) problems["source.id"] = "Pick a knowledge source.";
-      if (link.linkStyle === "custom" && !/^[a-z0-9_-]{1,40}$/i.test(link.linkCustom)) problems.linkCustom = "Use letters, numbers, - or _.";
+      if (link.linkStyle === "custom" && !/^[a-z0-9_-]{1,40}$/i.test(link.linkCustom)) problems.linkCustom = `Enter the portal's address, like ${instanceUrl}/support.`;
     }
     if (target === 2) {
       if (!name.trim()) problems.name = "Give the sync a name.";
@@ -170,6 +192,7 @@ export function NewSyncWizard() {
           connectionId,
           audience,
           knowledgeBases: kbs,
+          filters,
           filterQuery: filterQuery.trim(),
           linkStyle: link.linkStyle,
           linkCustom: link.linkStyle === "custom" ? link.linkCustom : "",
@@ -199,6 +222,8 @@ export function NewSyncWizard() {
     );
   }
 
+  const existingSourceName = source.mode === "existing" ? gcSources.data?.sources.find((item) => item.id === source.id)?.name : undefined;
+
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
@@ -206,7 +231,7 @@ export function NewSyncWizard() {
           <ArrowLeft className="size-4" aria-hidden /> All syncs
         </Link>
         <h1 className="mt-3 text-[28px] font-medium tracking-tight text-navy">New sync</h1>
-        <p className="mt-1 text-[15px] text-navy/60">Send articles from ServiceNow knowledge bases to a Genesys Cloud knowledge source.</p>
+        <p className="mt-1 text-[15px] text-navy/60">Copy articles from ServiceNow to Genesys Cloud, and keep them up to date automatically.</p>
       </div>
 
       <Stepper step={step} />
@@ -222,11 +247,11 @@ export function NewSyncWizard() {
                 title="Connect ServiceNow first"
                 action={
                   <ButtonLink href="/connections" target="_blank">
-                    Add a connection in a new tab
+                    Open Connections in a new tab
                   </ButtonLink>
                 }
               >
-                <p>A sync reads from a ServiceNow connection. Once it&apos;s added, come back here and your knowledge bases appear.</p>
+                <p>A sync reads articles through a ServiceNow connection. Once it&apos;s added, come back to this tab and your knowledge bases appear.</p>
               </Callout>
             ) : (
               <>
@@ -239,6 +264,7 @@ export function NewSyncWizard() {
                         onChange={(event) => {
                           setConnectionChoice(event.target.value);
                           setKbs([]);
+                          setFilters(noFilters());
                         }}
                       >
                         {connectionList.map((item) => (
@@ -255,22 +281,30 @@ export function NewSyncWizard() {
                   </p>
                 )}
                 <div className="space-y-3">
-                  <div>
-                    <h2 className="text-base font-semibold text-navy">Knowledge bases</h2>
-                    <p className="text-sm text-navy/55">Only published articles that haven&apos;t expired are synced.</p>
-                  </div>
-                  <KnowledgeBasePicker connectionId={connectionId} selected={kbs} onChange={setKbs} error={fieldError("knowledgeBases")} />
+                  <SectionHeading title="Which knowledge bases?">Only published articles that haven&apos;t expired are copied.</SectionHeading>
+                  <KnowledgeBasePicker connectionId={connectionId} selected={kbs} onChange={changeKbs} error={fieldError("knowledgeBases")} />
                 </div>
                 {kbs.length > 0 ? (
                   <>
                     <div className="space-y-3">
-                      <div>
-                        <h2 className="text-base font-semibold text-navy">Audience</h2>
-                        <p className="text-sm text-navy/55">{suggestedAudience && !audienceOverride ? "Suggested from the portals these knowledge bases are published on." : "Labels the articles in Genesys Cloud."}</p>
-                      </div>
+                      <SectionHeading title="Who reads these articles?">
+                        {suggestedAudience && !audienceOverride
+                          ? "We picked this from where these knowledge bases are published. Change it if it's wrong."
+                          : "Used to label the articles in Genesys Cloud and to suggest where links open."}
+                      </SectionHeading>
                       <AudiencePicker value={audience} onChange={setAudienceOverride} />
                     </div>
-                    <ArticlePreview connectionId={connectionId} kbIds={kbs.map((kb) => kb.id)} filterQuery={filterQuery} onFilterChange={setFilterQuery} filterError={fieldError("filterQuery")} />
+                    <ArticlePreview
+                      connectionId={connectionId}
+                      kbIds={kbs.map((kb) => kb.id)}
+                      filters={filters}
+                      onFiltersChange={setFilters}
+                      filterQuery={filterQuery}
+                      onFilterChange={setFilterQuery}
+                      filterError={fieldError("filterQuery")}
+                      articlesError={fieldError("filters.articles")}
+                      onPreview={(preview) => setSampleArticle(preview?.sample[0]?.number ?? null)}
+                    />
                   </>
                 ) : null}
               </>
@@ -283,30 +317,32 @@ export function NewSyncWizard() {
             {!gcReady ? (
               <Callout
                 tone="warning"
-                title="Add Genesys Cloud sync credentials first"
+                title="Connect Genesys Cloud first"
                 action={
                   <ButtonLink href="/connections#genesys" target="_blank">
                     Open Connections in a new tab
                   </ButtonLink>
                 }
               >
-                <p>Syncs use a Client Credentials OAuth client to create sources and upload articles. This step unlocks as soon as you come back to this tab.</p>
+                <p>Syncs need their own access to Genesys Cloud to create knowledge sources and upload articles. An admin sets it up once on the Connections page. This step unlocks when you come back to this tab.</p>
               </Callout>
             ) : (
               <div className="space-y-3">
-                <div>
-                  <h2 className="text-base font-semibold text-navy">Genesys Cloud knowledge source</h2>
-                  <p className="text-sm text-navy/55">Articles are uploaded as Markdown files to a File Upload source.</p>
-                </div>
+                <SectionHeading title="Where should the articles go?">Each article becomes a file in a Genesys Cloud knowledge source.</SectionHeading>
                 <SourcePicker value={source} onChange={setSourceOverride} enabled={gcReady} error={fieldError("source.name") ?? fieldError("source.id") ?? fieldError("source")} />
               </div>
             )}
             <div className="space-y-3">
-              <div>
-                <h2 className="text-base font-semibold text-navy">Links back to ServiceNow</h2>
-                <p className="text-sm text-navy/55">Bots and agents can cite the original article.</p>
-              </div>
-              <LinkStylePicker linkStyle={link.linkStyle} linkCustom={link.linkCustom} instanceUrl={connection?.instanceUrl ?? null} onChange={setLinkOverride} customError={fieldError("linkCustom")} />
+              <SectionHeading title="Where should article links open?">Each article in Genesys Cloud links back to the original, so bots and agents can share it.</SectionHeading>
+              <LinkStylePicker
+                linkStyle={link.linkStyle}
+                linkCustom={link.linkCustom}
+                instanceUrl={connection?.instanceUrl ?? null}
+                portals={portals}
+                sampleArticle={sampleArticle}
+                onChange={setLinkOverride}
+                customError={fieldError("linkCustom")}
+              />
             </div>
           </div>
         ) : null}
@@ -314,29 +350,29 @@ export function NewSyncWizard() {
         {step === 2 ? (
           <div className="grid gap-8 lg:grid-cols-[1fr_300px]">
             <div className="space-y-7">
-              <Field label="Sync name" error={fieldError("name")}>
+              <Field label="Sync name" hint="Only shown in this app." error={fieldError("name")}>
                 {(props) => <Input {...props} value={name} onChange={(event) => setNameOverride(event.target.value)} maxLength={100} />}
               </Field>
               <div className="space-y-3">
-                <h2 className="text-base font-semibold text-navy">Schedule</h2>
+                <SectionHeading title="How often should it check for changes?" />
                 <SchedulePicker value={schedule} onChange={setSchedule} error={fieldError("schedule") ?? fieldError("schedule.days")} />
               </div>
               <Checkbox
                 checked={runNow}
                 onChange={(event) => setRunNow(event.target.checked)}
                 label="Run the first sync now"
-                description="Uploads every matching article right away. Later runs only send changes."
+                description="Sends every matching article right away. Later runs only send what changed."
               />
             </div>
             <aside className="h-fit rounded-xl bg-nimbus p-5">
-              <h2 className="text-sm font-semibold text-navy">Review</h2>
+              <h2 className="text-sm font-semibold text-navy">Summary</h2>
               <dl className="mt-2 divide-y divide-navy/[0.07]">
                 <ReviewRow label="From">{connection?.name}</ReviewRow>
-                <ReviewRow label="Knowledge">{kbs.map((kb) => kb.title).join(", ")}</ReviewRow>
-                <ReviewRow label="Audience">{AUDIENCE[audience].label}</ReviewRow>
-                {filterQuery.trim() ? <ReviewRow label="Filter">{truncate(filterQuery.trim(), 80)}</ReviewRow> : null}
-                <ReviewRow label="To">{source.mode === "new" ? `New source "${source.name}"` : "Existing source"}</ReviewRow>
-                <ReviewRow label="Links">{LINK_STYLES.find((item) => item.value === link.linkStyle)?.label}</ReviewRow>
+                <ReviewRow label="Knowledge bases">{kbs.map((kb) => kb.title).join(", ")}</ReviewRow>
+                {filterSummary ? <ReviewRow label="Only">{filterSummary}</ReviewRow> : null}
+                <ReviewRow label="Readers">{AUDIENCE[audience].label}</ReviewRow>
+                <ReviewRow label="Goes to">{source.mode === "new" ? `New knowledge source "${source.name}"` : (existingSourceName ?? "An existing knowledge source")}</ReviewRow>
+                <ReviewRow label="Links open in">{linkStyleLabel(link.linkStyle, link.linkCustom)}</ReviewRow>
                 <ReviewRow label="Runs">{describeSchedule(schedule, { withTimeZone: true })}</ReviewRow>
               </dl>
             </aside>

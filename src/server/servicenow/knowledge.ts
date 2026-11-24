@@ -1,6 +1,7 @@
 import { z } from "zod";
-import type { Audience, KnowledgeBaseDTO, PreviewDTO } from "@/lib/api-types";
+import type { ArticleOptionDTO, Audience, FilterOptionsDTO, KnowledgeBaseDTO, PreviewDTO } from "@/lib/api-types";
 import { AppError } from "@/lib/errors";
+import { ARTICLE_NUMBER, categoryLabel, LANGUAGE_CODE, NO_CATEGORY, type SyncFilters } from "@/lib/filters";
 import { type Logger, scopedLogger } from "../log";
 import { type SnConnection, snGet } from "./client";
 
@@ -204,12 +205,49 @@ async function portalsByKnowledgeBase(connection: SnConnection, logger: Logger):
 export function validateFilterQuery(filter: string): string | null {
   const value = filter.trim().replace(/^\^+/, "").replace(/\^+$/, "");
   if (!value) return null;
-  if (value.length > 1000) return "Keep the filter under 1,000 characters.";
-  if (/(^|\^)NQ/.test(value)) return "The filter can't start a new query (^NQ).";
-  if (/^OR/i.test(value)) return "The filter can't begin with OR.";
-  if (/ORDERBY|GROUPBY/i.test(value)) return "Sorting and grouping aren't allowed in the filter.";
-  if (/[\r\n]/.test(value)) return "The filter must be on one line.";
+  if (value.length > 1000) return "Keep the condition under 1,000 characters. For long lists of categories or articles, use the choices above instead: they have no length limit.";
+  if (/(^|\^)NQ/.test(value)) return "The condition can't start a new query (^NQ).";
+  if (/^OR/i.test(value)) return "The condition can't begin with OR.";
+  if (/ORDERBY|GROUPBY/i.test(value)) return "Sorting and grouping aren't allowed in the condition.";
+  if (/[\r\n]/.test(value)) return "The condition must be on one line.";
   return null;
+}
+
+/** List sizes per request, so no URL gets too long however many categories or articles are picked. */
+const CATEGORY_CHUNK = 50;
+const NUMBER_CHUNK = 100;
+const SYS_ID_CHUNK = 50;
+
+function chunked<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
+/**
+ * The friendly filters as encoded queries. Within one filter values are ORed; filters are ANDed.
+ * Long lists are split across several queries that together match each article exactly once.
+ * Picking articles with none chosen yet matches nothing, so there's no query at all.
+ */
+export function filterQueries(filters: SyncFilters): string[] {
+  const categoryIds = [...new Set(filters.categories.map((category) => category.id).filter((id) => SYS_ID.test(id)))];
+  const withoutCategory = filters.categories.some((category) => category.id === NO_CATEGORY);
+  const languages = [...new Set(filters.languages.map((language) => language.code).filter((code) => LANGUAGE_CODE.test(code)))];
+  const numbers = filters.articles && [...new Set(filters.articles.map((article) => article.number).filter((number) => ARTICLE_NUMBER.test(number)))];
+
+  const categoryParts =
+    categoryIds.length > 0
+      ? chunked(categoryIds, CATEGORY_CHUNK).map((ids, index) => `kb_categoryIN${ids.join(",")}${withoutCategory && index === 0 ? "^ORkb_categoryISEMPTY" : ""}`)
+      : [withoutCategory ? "kb_categoryISEMPTY" : ""];
+  const languagePart = languages.length > 0 ? `languageIN${languages.join(",")}` : "";
+  const numberParts = numbers ? chunked(numbers, NUMBER_CHUNK).map((list) => `numberIN${list.join(",")}`) : [""];
+  return categoryParts.flatMap((categoryPart) => numberParts.map((numberPart) => [categoryPart, languagePart, numberPart].filter(Boolean).join("^")));
+}
+
+/** Everything that narrows a sync's articles: the friendly filters plus the optional custom query. */
+export function articleFilters(filters: SyncFilters, customQuery: string): string[] {
+  const custom = customQuery.trim().replace(/^\^+/, "").replace(/\^+$/, "");
+  return filterQueries(filters).map((part) => [part, custom].filter(Boolean).join("^"));
 }
 
 export function buildArticleQuery(kbIds: string[], filter: string, today: string, options: { orderBy?: string } = {}): string {
@@ -220,71 +258,300 @@ export function buildArticleQuery(kbIds: string[], filter: string, today: string
 
 const SUMMARY_FIELDS = "sys_id,number,short_description,sys_updated_on,kb_knowledge_base,kb_knowledge_base.title,kb_category.label";
 
+/** One filter, or several whose matches are combined (see `articleFilters`). */
+type ArticleFilter = string | string[];
+
+function filterList(filter: ArticleFilter): string[] {
+  return typeof filter === "string" ? [filter] : filter;
+}
+
+/** Runs `task` over `items`, a few at a time, keeping the order. */
+async function inBatches<T, R>(items: T[], size: number, task: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  for (let index = 0; index < items.length; index += size) results.push(...(await Promise.all(items.slice(index, index + size).map(task))));
+  return results;
+}
+
+function newestFirst(a: ArticleSummary, b: ArticleSummary): number {
+  return b.updatedAt.localeCompare(a.updatedAt);
+}
+
+function toSample(article: ArticleSummary): PreviewDTO["sample"][number] {
+  return { number: article.number, title: article.title, kbName: article.kbName, updatedAt: article.updatedAt };
+}
+
+function toOption(article: ArticleSummary): ArticleOptionDTO {
+  return { number: article.number, title: article.title, kbId: article.kbId, kbName: article.kbName, category: article.category, updatedAt: article.updatedAt };
+}
+
 /** Every published, current article in the selected knowledge bases (light fields only). */
 export async function listArticleSummaries(
   connection: SnConnection,
-  params: { kbIds: string[]; filter: string; maxArticles?: number; now?: Date },
+  params: { kbIds: string[]; filter: ArticleFilter; maxArticles?: number; now?: Date },
   logger: Logger = log,
 ): Promise<ArticleSummary[]> {
-  if (params.kbIds.length === 0) return [];
+  const filters = filterList(params.filter);
+  if (params.kbIds.length === 0 || filters.length === 0) return [];
   const maxArticles = params.maxArticles ?? MAX_ARTICLES_PER_SYNC;
-  const query = buildArticleQuery(params.kbIds, params.filter, todayUtc(params.now), { orderBy: "ORDERBYsys_id" });
+  const today = todayUtc(params.now);
   const byId = new Map<string, ArticleSummary>();
 
-  for (let offset = 0; ; offset += ARTICLE_PAGE_SIZE) {
-    const { data } = await snGet<unknown>(connection, {
-      operation: "sn.listArticles",
-      path: "/api/now/table/kb_knowledge",
-      query: {
-        sysparm_query: query,
-        sysparm_fields: SUMMARY_FIELDS,
-        sysparm_limit: ARTICLE_PAGE_SIZE,
-        sysparm_offset: offset,
-        sysparm_exclude_reference_link: true,
-        sysparm_no_count: true,
-      },
-      log: logger,
-    });
-    const page = z.object({ result: z.array(z.unknown()) }).safeParse(data);
-    if (!page.success) throw new AppError("SN_BAD_RESPONSE", { detail: "sn.listArticles: missing result array" });
-    for (const item of page.data.result) {
-      const row = articleSummaryRow.safeParse(item);
-      if (row.success) byId.set(row.data.sys_id, toSummary(row.data));
+  for (const filter of filters) {
+    const query = buildArticleQuery(params.kbIds, filter, today, { orderBy: "ORDERBYsys_id" });
+    for (let offset = 0; ; offset += ARTICLE_PAGE_SIZE) {
+      const { data } = await snGet<unknown>(connection, {
+        operation: "sn.listArticles",
+        path: "/api/now/table/kb_knowledge",
+        query: {
+          sysparm_query: query,
+          sysparm_fields: SUMMARY_FIELDS,
+          sysparm_limit: ARTICLE_PAGE_SIZE,
+          sysparm_offset: offset,
+          sysparm_exclude_reference_link: true,
+          sysparm_no_count: true,
+        },
+        log: logger,
+      });
+      const page = z.object({ result: z.array(z.unknown()) }).safeParse(data);
+      if (!page.success) throw new AppError("SN_BAD_RESPONSE", { detail: "sn.listArticles: missing result array" });
+      for (const item of page.data.result) {
+        const row = articleSummaryRow.safeParse(item);
+        if (row.success) byId.set(row.data.sys_id, toSummary(row.data));
+      }
+      if (byId.size > maxArticles) {
+        throw new AppError("SN_TOO_MANY_ARTICLES", { detail: `more than ${maxArticles} articles match` });
+      }
+      if (page.data.result.length < ARTICLE_PAGE_SIZE) break;
     }
-    if (byId.size > maxArticles) {
-      throw new AppError("SN_TOO_MANY_ARTICLES", { detail: `more than ${maxArticles} articles match` });
-    }
-    if (page.data.result.length < ARTICLE_PAGE_SIZE) break;
   }
-  logger.debug("Listed ServiceNow articles", { connectionId: connection.id, count: byId.size, kbCount: params.kbIds.length });
+  logger.debug("Listed ServiceNow articles", { connectionId: connection.id, count: byId.size, kbCount: params.kbIds.length, queries: filters.length });
   return [...byId.values()];
 }
 
+/**
+ * How many articles match, and the most recently updated ones. With hand-picked articles (`chosen`)
+ * it also tells which of them won't be synced.
+ */
 export async function previewArticles(
   connection: SnConnection,
-  params: { kbIds: string[]; filter: string; now?: Date },
+  params: { kbIds: string[]; filter: ArticleFilter; chosen?: string[] | null; now?: Date },
   logger: Logger = log,
 ): Promise<PreviewDTO> {
-  const { data, headers } = await snGet<unknown>(connection, {
-    operation: "sn.previewArticles",
+  const filters = filterList(params.filter);
+  if (params.chosen) {
+    const articles = await listArticleSummaries(connection, { kbIds: params.kbIds, filter: filters, now: params.now }, logger);
+    const found = new Set(articles.map((article) => article.number.toUpperCase()));
+    return {
+      count: articles.length,
+      sample: [...articles].sort(newestFirst).slice(0, 5).map(toSample),
+      missing: params.chosen.filter((number) => !found.has(number.toUpperCase())),
+    };
+  }
+
+  const today = todayUtc(params.now);
+  const pages = await inBatches(filters, 4, async (filter) => {
+    const { data, headers } = await snGet<unknown>(connection, {
+      operation: "sn.previewArticles",
+      path: "/api/now/table/kb_knowledge",
+      query: {
+        sysparm_query: buildArticleQuery(params.kbIds, filter, today, { orderBy: "ORDERBYDESCsys_updated_on" }),
+        sysparm_fields: SUMMARY_FIELDS,
+        sysparm_limit: 5,
+        sysparm_exclude_reference_link: true,
+      },
+      log: logger,
+    });
+    const rows = tableResult(articleSummaryRow).safeParse(data);
+    if (!rows.success) throw new AppError("SN_BAD_RESPONSE", { detail: "sn.previewArticles: missing result array" });
+    const total = Number(headers.get("x-total-count") ?? Number.NaN);
+    return { count: Number.isFinite(total) ? total : rows.data.length, articles: rows.data.map(toSummary) };
+  });
+  return {
+    count: pages.reduce((sum, page) => sum + page.count, 0),
+    sample: pages
+      .flatMap((page) => page.articles)
+      .sort(newestFirst)
+      .slice(0, 5)
+      .map(toSample),
+  };
+}
+
+export const ARTICLE_SEARCH_LIMIT = 20;
+
+/** Published articles whose number or title contains `text` (all of them when empty), most recently updated first. */
+export async function searchArticles(
+  connection: SnConnection,
+  params: { kbIds: string[]; text: string; now?: Date },
+  logger: Logger = log,
+): Promise<{ articles: ArticleOptionDTO[]; more: boolean }> {
+  const text = params.text.replace(/[\^\r\n]/g, " ").trim().slice(0, 100);
+  const { data } = await snGet<unknown>(connection, {
+    operation: "sn.searchArticles",
     path: "/api/now/table/kb_knowledge",
     query: {
-      sysparm_query: buildArticleQuery(params.kbIds, params.filter, todayUtc(params.now), { orderBy: "ORDERBYDESCsys_updated_on" }),
+      sysparm_query: buildArticleQuery(params.kbIds, text ? `numberLIKE${text}^ORshort_descriptionLIKE${text}` : "", todayUtc(params.now), {
+        orderBy: "ORDERBYDESCsys_updated_on",
+      }),
       sysparm_fields: SUMMARY_FIELDS,
-      sysparm_limit: 5,
+      sysparm_limit: ARTICLE_SEARCH_LIMIT + 1,
       sysparm_exclude_reference_link: true,
+      sysparm_no_count: true,
     },
     log: logger,
   });
   const rows = tableResult(articleSummaryRow).safeParse(data);
-  if (!rows.success) throw new AppError("SN_BAD_RESPONSE", { detail: "sn.previewArticles: missing result array" });
-  const total = Number(headers.get("x-total-count"));
-  return {
-    count: Number.isFinite(total) ? total : rows.data.length,
-    sample: rows.data.map((row) => {
-      const summary = toSummary(row);
-      return { number: summary.number, title: summary.title, kbName: summary.kbName, updatedAt: summary.updatedAt };
+  if (!rows.success) throw new AppError("SN_BAD_RESPONSE", { detail: "sn.searchArticles: missing result array" });
+  return { articles: rows.data.slice(0, ARTICLE_SEARCH_LIMIT).map((row) => toOption(toSummary(row))), more: rows.data.length > ARTICLE_SEARCH_LIMIT };
+}
+
+/** Published articles in these knowledge bases with the given numbers or sys_ids, e.g. from a pasted list. */
+export async function lookupArticles(
+  connection: SnConnection,
+  params: { kbIds: string[]; refs: string[]; now?: Date },
+  logger: Logger = log,
+): Promise<{ found: ArticleOptionDTO[]; notFound: string[] }> {
+  const ids = params.refs.filter((ref) => SYS_ID.test(ref));
+  const numbers = params.refs.filter((ref) => !SYS_ID.test(ref) && ARTICLE_NUMBER.test(ref));
+  const filters = [...chunked(numbers, NUMBER_CHUNK).map((list) => `numberIN${list.join(",")}`), ...chunked(ids, SYS_ID_CHUNK).map((list) => `sys_idIN${list.join(",")}`)];
+  const articles = (await listArticleSummaries(connection, { kbIds: params.kbIds, filter: filters, now: params.now }, logger)).filter((article) =>
+    ARTICLE_NUMBER.test(article.number),
+  );
+  const byId = new Map(articles.map((article) => [article.id, article]));
+  const byNumber = new Map(articles.map((article) => [article.number.toUpperCase(), article]));
+
+  const found = new Map<string, ArticleSummary>();
+  const notFound: string[] = [];
+  for (const ref of params.refs) {
+    const article = SYS_ID.test(ref) ? byId.get(ref) : byNumber.get(ref.toUpperCase());
+    if (article) found.set(article.number.toUpperCase(), article);
+    else notFound.push(ref);
+  }
+  logger.debug("Looked up ServiceNow articles", { connectionId: connection.id, refs: params.refs.length, found: found.size });
+  return { found: [...found.values()].map(toOption), notFound };
+}
+
+const MAX_FILTER_OPTIONS = 500;
+
+const aggregateGroups = z.object({
+  result: z.array(
+    z.object({
+      stats: z.object({ count: scalar.optional() }).optional(),
+      groupby_fields: z.array(z.object({ field: z.string(), value: scalar.nullish(), display_value: scalar.nullish() })).default([]),
     }),
+  ),
+});
+
+interface ArticleGroup {
+  count: number;
+  fields: Map<string, { value: string; label: string }>;
+}
+
+/** Published-article counts grouped by `groupBy`, with display values for the grouped fields. */
+async function groupPublishedArticles(connection: SnConnection, kbIds: string[], groupBy: string, operation: string, logger: Logger): Promise<ArticleGroup[]> {
+  const { data } = await snGet<unknown>(connection, {
+    operation,
+    path: "/api/now/stats/kb_knowledge",
+    query: {
+      sysparm_count: true,
+      sysparm_group_by: groupBy,
+      sysparm_display_value: "all",
+      sysparm_query: buildArticleQuery(kbIds, "", todayUtc()),
+    },
+    log: logger,
+  });
+  const parsed = aggregateGroups.safeParse(data);
+  if (!parsed.success) throw new AppError("SN_BAD_RESPONSE", { detail: `${operation}: unexpected aggregate response` });
+  return parsed.data.result.map((group) => ({
+    count: Number(group.stats?.count ?? 0) || 0,
+    fields: new Map(group.groupby_fields.map((field) => [field.field, { value: field.value ?? "", label: field.display_value ?? field.value ?? "" }])),
+  }));
+}
+
+/** Full category paths ("Email / Outlook"). Missing entries fall back to the plain label. */
+async function categoryPaths(connection: SnConnection, ids: string[], logger: Logger): Promise<Map<string, string>> {
+  const paths = new Map<string, string>();
+  try {
+    for (let index = 0; index < ids.length; index += 100) {
+      const chunk = ids.slice(index, index + 100);
+      const { data } = await snGet<unknown>(connection, {
+        operation: "sn.categoryPaths",
+        path: "/api/now/table/kb_category",
+        query: {
+          sysparm_query: `sys_idIN${chunk.join(",")}`,
+          sysparm_fields: "sys_id,full_category",
+          sysparm_limit: chunk.length,
+          sysparm_exclude_reference_link: true,
+          sysparm_no_count: true,
+        },
+        log: logger,
+      });
+      const rows = tableResult(z.object({ sys_id: z.string().regex(SYS_ID), full_category: str })).safeParse(data);
+      for (const row of rows.success ? rows.data : []) {
+        if (row.full_category.trim()) paths.set(row.sys_id, row.full_category.trim());
+      }
+    }
+  } catch (error) {
+    logger.debug("Category paths unavailable", { err: error, dedupeKey: `sn.categoryPaths:${connection.id}` });
+  }
+  return paths;
+}
+
+async function categoryOptions(connection: SnConnection, kbIds: string[], logger: Logger): Promise<FilterOptionsDTO["categories"]> {
+  const groups = await groupPublishedArticles(connection, kbIds, "kb_knowledge_base,kb_category", "sn.categoryCounts", logger);
+  const byId = new Map<string, FilterOptionsDTO["categories"][number]>();
+  for (const group of groups) {
+    const kb = group.fields.get("kb_knowledge_base");
+    const category = group.fields.get("kb_category");
+    const id = category && SYS_ID.test(category.value) ? category.value : NO_CATEGORY;
+    const existing = byId.get(id);
+    if (existing) {
+      existing.count += group.count;
+      continue;
+    }
+    const label = categoryLabel({ id, label: category?.label ?? "" });
+    byId.set(id, {
+      id,
+      label,
+      path: label,
+      kbId: id && kb && SYS_ID.test(kb.value) ? kb.value : NO_CATEGORY,
+      kbName: id ? (kb?.label ?? "") : "",
+      count: group.count,
+    });
+  }
+  const paths = await categoryPaths(connection, [...byId.keys()].filter(Boolean), logger);
+  for (const option of byId.values()) option.path = paths.get(option.id) ?? option.label;
+  return [...byId.values()]
+    .filter((option) => option.count > 0)
+    .sort((a, b) => Number(a.id === NO_CATEGORY) - Number(b.id === NO_CATEGORY) || a.kbName.localeCompare(b.kbName) || a.path.localeCompare(b.path))
+    .slice(0, MAX_FILTER_OPTIONS);
+}
+
+async function languageOptions(connection: SnConnection, kbIds: string[], logger: Logger): Promise<FilterOptionsDTO["languages"]> {
+  const groups = await groupPublishedArticles(connection, kbIds, "language", "sn.languageCounts", logger);
+  const byCode = new Map<string, FilterOptionsDTO["languages"][number]>();
+  for (const group of groups) {
+    const language = group.fields.get("language");
+    const code = language?.value ?? "";
+    if (!LANGUAGE_CODE.test(code) || group.count <= 0) continue;
+    const existing = byCode.get(code);
+    if (existing) existing.count += group.count;
+    else byCode.set(code, { code, label: language?.label && language.label !== code ? language.label : code, count: group.count });
+  }
+  return [...byCode.values()].sort((a, b) => a.label.localeCompare(b.label)).slice(0, MAX_FILTER_OPTIONS);
+}
+
+/**
+ * Categories and languages used by published articles in these knowledge bases, with counts.
+ * One of them failing (no language field, aggregate access denied) just leaves that list empty.
+ */
+export async function listFilterOptions(connection: SnConnection, kbIds: string[], logger: Logger = log): Promise<FilterOptionsDTO> {
+  const [categories, languages] = await Promise.allSettled([categoryOptions(connection, kbIds, logger), languageOptions(connection, kbIds, logger)]);
+  if (categories.status === "rejected" && languages.status === "rejected") throw categories.reason;
+  if (categories.status === "rejected") logger.debug("Category filter unavailable", { err: categories.reason, dedupeKey: `sn.categoryOptions:${connection.id}` });
+  if (languages.status === "rejected") logger.debug("Language filter unavailable", { err: languages.reason, dedupeKey: `sn.languageOptions:${connection.id}` });
+  return {
+    categories: categories.status === "fulfilled" ? categories.value : [],
+    languages: languages.status === "fulfilled" ? languages.value : [],
   };
 }
 

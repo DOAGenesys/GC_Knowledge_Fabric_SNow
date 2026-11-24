@@ -19,10 +19,10 @@ export function runProgress(run: RunDTO): RunProgress {
     return { value: done / run.plannedUploads, label, detail: `${done} of ${plural(run.plannedUploads, "article")}` };
   }
   if (run.phase === "deleting" && run.plannedDeletions > 0) {
-    return { value: run.deleted / run.plannedDeletions, label, detail: `${run.deleted} of ${plural(run.plannedDeletions, "retired article")}` };
+    return { value: run.deleted / run.plannedDeletions, label, detail: `${run.deleted} of ${plural(run.plannedDeletions, "article")} removed` };
   }
   if (run.phase === "processing") {
-    return { value: null, label, detail: run.gcIngestionStatus ? `Genesys Cloud status: ${run.gcIngestionStatus}` : "This usually takes a minute or two." };
+    return { value: null, label, detail: "This usually takes a minute or two." };
   }
   if (run.phase === "committing" || run.phase === "finalizing") {
     const changes = run.uploaded + run.deleted;

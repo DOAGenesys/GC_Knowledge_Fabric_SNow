@@ -1,10 +1,11 @@
 "use client";
 
 import { Check, Copy } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { Button } from "./button";
 import { cn } from "./cn";
 
-export function CopyButton({ value, label = "Copy", size = "sm", className }: { value: string; label?: string; size?: "xs" | "sm"; className?: string }) {
+function useCopy(value: string) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -22,6 +23,11 @@ export function CopyButton({ value, label = "Copy", size = "sm", className }: { 
     }
   }
 
+  return { copied, copy };
+}
+
+export function CopyButton({ value, label = "Copy", size = "sm", className }: { value: string; label?: string; size?: "xs" | "sm"; className?: string }) {
+  const { copied, copy } = useCopy(value);
   const Icon = copied ? Check : Copy;
   return (
     <button
@@ -38,5 +44,15 @@ export function CopyButton({ value, label = "Copy", size = "sm", className }: { 
     >
       <Icon className={size === "xs" ? "size-3.5" : "size-4"} aria-hidden />
     </button>
+  );
+}
+
+/** A labelled button that copies `value`, e.g. a ready-made request for an admin. */
+export function CopyTextButton({ value, children, className }: { value: string; children: ReactNode; className?: string }) {
+  const { copied, copy } = useCopy(value);
+  return (
+    <Button size="sm" onClick={copy} className={className} icon={copied ? <Check className="size-3.5 text-patina-ink" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}>
+      {copied ? "Copied" : children}
+    </Button>
   );
 }

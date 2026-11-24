@@ -89,11 +89,11 @@ describe("Dashboard", () => {
     mockApi({
       "GET /api/session": { body: makeSession() },
       "GET /api/syncs": { body: { syncs: [healthy] } },
-      "POST /api/syncs/:id/run": { status: 409, body: errorBody("GC_CREDENTIALS_MISSING", "Genesys Cloud sync credentials are not set up yet.", { title: "Sync credentials missing" }) },
+      "POST /api/syncs/:id/run": { status: 409, body: errorBody("GC_CREDENTIALS_MISSING", "Syncs don't have access to Genesys Cloud yet.", { title: "Genesys Cloud access missing" }) },
     });
     renderUi(<Dashboard />);
     fireEvent.click(await screen.findByRole("button", { name: "Sync now" }));
-    expect(await screen.findByText("Sync credentials missing")).toBeTruthy();
+    expect(await screen.findByText("Genesys Cloud access missing")).toBeTruthy();
   });
 
   it("guides a new organization through setup", async () => {
@@ -104,8 +104,9 @@ describe("Dashboard", () => {
     renderUi(<Dashboard />);
     expect(await screen.findByText("Get set up in three steps")).toBeTruthy();
     expect(screen.getByText("1 of 3 done")).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Fix credentials/ }).getAttribute("href")).toBe("/connections#genesys");
-    expect(screen.getByRole("link", { name: /Create sync/ }).getAttribute("href")).toBe("/syncs/new");
+    expect(screen.getByText("Give syncs access to Genesys Cloud")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Fix access/ }).getAttribute("href")).toBe("/connections#genesys");
+    expect(screen.getByRole("link", { name: /Create a sync/ }).getAttribute("href")).toBe("/syncs/new");
     expect(screen.queryByText("Everything's connected")).toBeNull();
   });
 

@@ -15,9 +15,6 @@ export interface ErrorSpec {
   retryable: boolean;
 }
 
-const GC_PERMISSIONS_HINT =
-  "Give the Genesys Cloud OAuth client a role with: knowledge:source:view, knowledge:synchronization:add, knowledge:synchronization:view, knowledge:synchronization:edit, knowledge:synchronization:upload and knowledge:synchronization:deleteFile.";
-
 export const ERROR_CATALOG = {
   UNAUTHENTICATED: {
     status: 401,
@@ -83,7 +80,7 @@ export const ERROR_CATALOG = {
     status: 502,
     title: "Sign-in failed",
     message: "Genesys Cloud sign-in didn't complete.",
-    hint: "Check the region and the OAuth client ID, and that the client's redirect URI matches this app.",
+    hint: "Check the region and the sign-in client ID, and that the client's redirect URI matches this app.",
     retryable: false,
   },
   GC_KNOWLEDGE_ACCESS_DENIED: {
@@ -95,9 +92,9 @@ export const ERROR_CATALOG = {
   },
   GC_CREDENTIALS_MISSING: {
     status: 409,
-    title: "Sync credentials missing",
-    message: "Genesys Cloud sync credentials are not set up yet.",
-    hint: "Open Connections and add a Genesys Cloud OAuth client (Client Credentials) for background syncs.",
+    title: "Genesys Cloud access missing",
+    message: "Syncs don't have access to Genesys Cloud yet.",
+    hint: "Open Connections and set up Genesys Cloud access for syncs.",
     retryable: false,
   },
   GC_ORG_MISMATCH: {
@@ -118,7 +115,7 @@ export const ERROR_CATALOG = {
     status: 502,
     title: "Missing Genesys Cloud permissions",
     message: "The Genesys Cloud OAuth client isn't allowed to do this.",
-    hint: GC_PERMISSIONS_HINT,
+    hint: "Ask a Genesys Cloud admin to give the client's role every permission listed under \"Genesys Cloud access for syncs\" on the Connections page.",
     retryable: false,
   },
   GC_SOURCE_NOT_FOUND: {
@@ -237,8 +234,8 @@ export const ERROR_CATALOG = {
   SN_QUERY_INVALID: {
     status: 400,
     title: "Invalid filter",
-    message: "ServiceNow rejected the article filter.",
-    hint: "Check the advanced filter (encoded query) in the sync settings.",
+    message: "ServiceNow didn't accept the article filter.",
+    hint: "Open the sync's settings and check its filters, especially the ServiceNow condition if there is one.",
     retryable: false,
   },
   SN_BAD_RESPONSE: {
@@ -252,7 +249,7 @@ export const ERROR_CATALOG = {
     status: 400,
     title: "Too many articles",
     message: "These knowledge bases contain more articles than one sync can handle.",
-    hint: "Split them across several syncs or narrow the advanced filter.",
+    hint: "In the sync's settings, narrow the articles down by category or language, or split the knowledge bases across several syncs.",
     retryable: false,
   },
   SN_NO_ARTICLES: {

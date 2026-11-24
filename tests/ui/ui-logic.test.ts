@@ -1,9 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
-import { connectionBody } from "@/components/connections/connection-dialog";
+import { connectionBody, suggestedConnectionName } from "@/components/connections/connection-dialog";
 import { runProgress } from "@/components/syncs/run-progress";
-import { browserTimeZone, suggestLinkStyle } from "@/components/syncs/sync-fields";
+import { browserTimeZone, gmtOffset, suggestLinkStyle } from "@/components/syncs/sync-fields";
 import type { LinkStyle, RunPhase, RunStatus } from "@/lib/api-types";
-import { AUDIENCE, AUTH_TYPES, defaultLinkStyle, firstName, greeting, LINK_STYLES, PHASE_LABEL, PHASE_STEPS, RUN_STATUS } from "@/lib/ui-text";
+import {
+  articleLink,
+  AUDIENCE,
+  AUTH_TYPES,
+  defaultLinkStyle,
+  firstName,
+  gcAdminRequest,
+  GC_PERMISSIONS,
+  greeting,
+  LINK_STYLES,
+  linkStyleLabel,
+  PHASE_LABEL,
+  PHASE_STEPS,
+  portalName,
+  portalSuffixFrom,
+  RUN_STATUS,
+} from "@/lib/ui-text";
 import { makeRun } from "./helpers/fixtures";
 
 describe("runProgress", () => {
@@ -18,14 +34,17 @@ describe("runProgress", () => {
   it("measures deletions", () => {
     expect(runProgress(makeRun({ status: "running", phase: "deleting", plannedDeletions: 4, deleted: 1 }))).toEqual({
       value: 0.25,
-      label: "Removing retired articles",
-      detail: "1 of 4 retired articles",
+      label: "Removing articles that left ServiceNow",
+      detail: "1 of 4 articles removed",
     });
   });
 
-  it("is indeterminate while Genesys Cloud indexes", () => {
-    expect(runProgress(makeRun({ status: "running", phase: "processing", gcIngestionStatus: "InProgress" }))).toMatchObject({ value: null, detail: "Genesys Cloud status: InProgress" });
-    expect(runProgress(makeRun({ status: "running", phase: "processing", gcIngestionStatus: null })).detail).toBe("This usually takes a minute or two.");
+  it("is indeterminate while Genesys Cloud makes the articles searchable", () => {
+    expect(runProgress(makeRun({ status: "running", phase: "processing", gcIngestionStatus: "InProgress" }))).toMatchObject({
+      value: null,
+      label: "Genesys Cloud is making the articles searchable",
+      detail: "This usually takes a minute or two.",
+    });
   });
 
   it("summarizes changes while committing", () => {
@@ -68,6 +87,55 @@ describe("connectionBody", () => {
     expect(connectionBody({ ...base, authType: "basic", password: "pw-not-real" }).auth).toEqual({ type: "basic", username: "svc", password: "pw-not-real" });
     expect(connectionBody({ ...base, authType: "apikey", apiKey: "key-not-real" }).auth).toEqual({ type: "apikey", apiKey: "key-not-real" });
   });
+
+  it("names the connection after the instance when the name is left blank", () => {
+    expect(connectionBody({ ...base, name: " ", authType: "basic" }).name).toBe("Acme ServiceNow");
+    expect(suggestedConnectionName("https://acme-dev.service-now.com/now/nav/ui")).toBe("Acme-dev ServiceNow");
+    expect(suggestedConnectionName("kb.example.com")).toBe("kb.example.com");
+    expect(suggestedConnectionName("")).toBe("");
+    expect(suggestedConnectionName("http://[bad")).toBe("");
+  });
+});
+
+describe("links and portals", () => {
+  it("builds the same article links the sync writes", () => {
+    expect(articleLink("https://acme.service-now.com", "csm", "", "KB001")).toBe("https://acme.service-now.com/csm?id=kb_article_view&sysparm_article=KB001");
+    expect(articleLink("https://acme.service-now.com", "custom", "support", "KB001")).toBe("https://acme.service-now.com/support?id=kb_article_view&sysparm_article=KB001");
+    expect(articleLink("https://acme.service-now.com", "classic", "", "KB001")).toBe("https://acme.service-now.com/kb_view.do?sysparm_article=KB001");
+  });
+
+  it("gives portals friendly names", () => {
+    expect(portalName("business_portal")).toBe("Business Portal");
+    expect(portalName("ESC")).toBe("Employee Center");
+    expect(portalName("help-center")).toBe("Help center portal");
+    expect(portalName("")).toBe("Portal");
+    expect(linkStyleLabel("custom", "support")).toBe("Support portal");
+    expect(linkStyleLabel("custom", "")).toBe("Another portal");
+    expect(linkStyleLabel("classic", "")).toBe("ServiceNow classic view");
+  });
+
+  it.each([
+    ["https://acme.service-now.com/support?id=kb_home", "support"],
+    ["acme.service-now.com/help/en", "help"],
+    ["/support", "support"],
+    ["support", "support"],
+    ["acme.service-now.com", ""],
+    ["  ", ""],
+  ])("reads the portal from %j", (input, expected) => {
+    expect(portalSuffixFrom(input)).toBe(expected);
+  });
+
+  it("shows time zones with their offset", () => {
+    expect(gmtOffset("UTC", new Date("2026-01-15T12:00:00Z"))).toBe("GMT+00:00");
+    expect(gmtOffset("Europe/Madrid", new Date("2026-01-15T12:00:00Z"))).toBe("GMT+01:00");
+    expect(gmtOffset("Not/AZone")).toBe("");
+  });
+
+  it("writes an admin request that lists every required permission", () => {
+    const request = gcAdminRequest();
+    for (const permission of GC_PERMISSIONS.filter((item) => !item.optional)) expect(request).toContain(permission.name);
+    expect(request).toContain("Client Credentials");
+  });
 });
 
 describe("ui text", () => {
@@ -95,7 +163,8 @@ describe("ui text", () => {
     expect(PHASE_STEPS.flatMap((step) => step.phases)).toEqual(phases.filter((phase) => phase !== "done"));
     expect(LINK_STYLES.map((style) => style.value).sort()).toEqual(["classic", "csm", "csp", "custom", "esc", "sp"]);
     expect(Object.keys(AUTH_TYPES).sort()).toEqual(["apikey", "basic", "oauth"]);
-    expect(AUDIENCE.csm.short).toBe("CSM");
+    expect(AUDIENCE.csm.short).toBe("For customers");
+    expect(AUDIENCE.itsm.label).toBe("Employees");
   });
 
   it("defaults links per audience", () => {

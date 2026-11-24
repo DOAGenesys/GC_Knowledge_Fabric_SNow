@@ -59,24 +59,24 @@ function SetupChecklist({ setup }: { setup: SessionInfo["setup"] }) {
     {
       done: setup.connections > 0,
       title: "Connect ServiceNow",
-      text: "Add the instance URL and an integration account that can read knowledge.",
+      text: "Enter your ServiceNow address and a user that can read your knowledge bases.",
       href: "/connections",
-      action: "Add connection",
+      action: "Connect ServiceNow",
     },
     {
       done: setup.gcCredentials === "ok",
       failed: setup.gcCredentials === "error",
-      title: "Add Genesys Cloud sync credentials",
-      text: "A Client Credentials OAuth client lets syncs run on schedule, without anyone signed in.",
+      title: "Give syncs access to Genesys Cloud",
+      text: "A Genesys Cloud admin creates an OAuth client once, so syncs can run on their own.",
       href: "/connections#genesys",
-      action: setup.gcCredentials === "error" ? "Fix credentials" : "Add credentials",
+      action: setup.gcCredentials === "error" ? "Fix access" : "Set up access",
     },
     {
       done: setup.syncs > 0,
       title: "Create your first sync",
-      text: "Pick knowledge bases, choose a knowledge source and set a schedule.",
+      text: "Pick the knowledge bases, where the articles go and how often to update them.",
       href: "/syncs/new",
-      action: "Create sync",
+      action: "Create a sync",
     },
   ];
   const completed = steps.filter((step) => step.done).length;

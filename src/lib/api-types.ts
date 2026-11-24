@@ -1,4 +1,5 @@
 import type { ErrorCode } from "./errors";
+import type { SyncFilters } from "./filters";
 import type { Schedule } from "./schedule";
 
 export type Audience = "csm" | "itsm";
@@ -51,6 +52,24 @@ export interface KnowledgeBaseDTO {
 export interface PreviewDTO {
   count: number;
   sample: Array<{ number: string; title: string; kbName: string; updatedAt: string }>;
+  /** Chosen article numbers that won't be synced: not published, or not in the chosen knowledge bases. */
+  missing?: string[];
+}
+
+/** A published article offered in search results or found from a pasted list. */
+export interface ArticleOptionDTO {
+  number: string;
+  title: string;
+  kbId: string;
+  kbName: string;
+  category: string;
+  updatedAt: string;
+}
+
+/** What the friendly filters can offer: values that published articles in the chosen knowledge bases actually use. */
+export interface FilterOptionsDTO {
+  categories: Array<{ id: string; label: string; path: string; kbId: string; kbName: string; count: number }>;
+  languages: Array<{ code: string; label: string; count: number }>;
 }
 
 export interface GcCredentialsDTO {
@@ -114,6 +133,8 @@ export interface SyncDTO {
   connection: { id: string; name: string; instanceUrl: string };
   kbIds: string[];
   kbNames: string[];
+  filters: SyncFilters;
+  /** Optional ServiceNow encoded query for cases the friendly filters don't cover. */
   filterQuery: string;
   linkStyle: LinkStyle;
   linkCustom: string;

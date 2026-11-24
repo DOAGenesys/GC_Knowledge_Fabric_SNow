@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ArticlePage, ArticleState, RunDetailDTO, RunDTO, RunNowResult, SyncDTO } from "@/lib/api-types";
 import { AppError, ERROR_CATALOG, isErrorCode } from "@/lib/errors";
+import { filtersSchema, noFilters, sameFilters } from "@/lib/filters";
 import { computeNextRun, scheduleSchema } from "@/lib/schedule";
 import { getSource, createFileUploadSource, type GcSource } from "../genesys/knowledge";
 import { listArticles, listRunItems, type RunItemStatus } from "../repo/items";
@@ -25,9 +26,10 @@ const syncFields = z
       .array(z.object({ id: z.string().regex(SYS_ID, "Invalid knowledge base"), title: z.string().trim().max(200) }))
       .min(1, "Pick at least one knowledge base")
       .max(25, "Pick at most 25 knowledge bases"),
+    filters: filtersSchema.default(noFilters),
     filterQuery: z
       .string()
-      .max(1000)
+      .max(5000)
       .default("")
       .superRefine((value, ctx) => {
         const problem = validateFilterQuery(value);
@@ -46,6 +48,9 @@ const syncFields = z
   .superRefine((value, ctx) => {
     if (value.linkStyle === "custom" && !value.linkCustom) {
       ctx.addIssue({ code: "custom", path: ["linkCustom"], message: "Enter the portal's URL suffix" });
+    }
+    if (value.filters.articles?.length === 0) {
+      ctx.addIssue({ code: "custom", path: ["filters", "articles"], message: "Choose at least one article, or switch to all published articles." });
     }
   });
 
@@ -111,6 +116,7 @@ export async function createSync(actor: ActorContext, input: CreateSyncInput): P
     audience: input.audience,
     kbIds: input.knowledgeBases.map((kb) => kb.id),
     kbNames: input.knowledgeBases.map((kb) => kb.title),
+    filters: input.filters,
     filterQuery: normalizedFilter(input.filterQuery),
     linkStyle: input.linkStyle,
     linkCustom: input.linkStyle === "custom" ? input.linkCustom : "",
@@ -150,6 +156,7 @@ export async function updateSync(actor: ActorContext, id: string, input: UpdateS
   const contentChanged =
     input.connectionId !== sync.connectionId ||
     !sameIds(kbIds, sync.kbIds) ||
+    !sameFilters(input.filters, sync.filters) ||
     filterQuery !== sync.filterQuery ||
     input.audience !== sync.audience ||
     input.linkStyle !== sync.linkStyle ||
@@ -167,6 +174,7 @@ export async function updateSync(actor: ActorContext, id: string, input: UpdateS
     audience: input.audience,
     kbIds,
     kbNames: input.knowledgeBases.map((kb) => kb.title),
+    filters: input.filters,
     filterQuery,
     linkStyle: input.linkStyle,
     linkCustom,
@@ -186,6 +194,7 @@ export async function setSyncEnabled(actor: ActorContext, id: string, enabled: b
     connectionId: sync.connectionId,
     audience: sync.audience,
     knowledgeBases: sync.kbIds.map((kbId, index) => ({ id: kbId, title: sync.kbNames[index] ?? "" })),
+    filters: sync.filters,
     filterQuery: sync.filterQuery,
     linkStyle: sync.linkStyle,
     linkCustom: sync.linkCustom,

@@ -24,6 +24,7 @@ export interface SyncOptions {
   kbs: FakeKb[];
   name?: string;
   audience?: "csm" | "itsm";
+  filters?: unknown;
   filterQuery?: string;
   linkStyle?: "classic" | "sp" | "esc" | "csm" | "csp" | "custom";
   linkCustom?: string;
@@ -92,6 +93,7 @@ export async function createWorld(options: { snAuth?: FakeSnAuth } = {}) {
         connectionId: connection.id,
         audience: syncOptions.audience ?? "csm",
         knowledgeBases: syncOptions.kbs.map((kb) => ({ id: kb.sys_id, title: kb.title })),
+        filters: syncOptions.filters,
         filterQuery: syncOptions.filterQuery ?? "",
         linkStyle: syncOptions.linkStyle ?? "csp",
         linkCustom: syncOptions.linkCustom ?? "",

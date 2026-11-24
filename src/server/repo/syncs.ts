@@ -1,4 +1,5 @@
 import type { Audience, LinkStyle, SyncDTO, SyncHealth } from "@/lib/api-types";
+import { parseStoredFilters, type SyncFilters } from "@/lib/filters";
 import { parseSchedule, type Schedule } from "@/lib/schedule";
 import { db, isUniqueViolation, toInt, toIso, toJson, toStringArray } from "../db";
 import { mapRun, toRunDTO } from "./runs";
@@ -11,6 +12,7 @@ export interface SyncRow {
   audience: Audience;
   kbIds: string[];
   kbNames: string[];
+  filters: SyncFilters;
   filterQuery: string;
   linkStyle: LinkStyle;
   linkCustom: string;
@@ -48,6 +50,7 @@ export function mapSync(row: Record<string, unknown>): SyncRow {
     audience: row.audience as Audience,
     kbIds: toStringArray(row.kb_ids),
     kbNames: toStringArray(row.kb_names),
+    filters: parseStoredFilters(toJson(row.filters)),
     filterQuery: String(row.filter_query ?? ""),
     linkStyle: row.link_style as LinkStyle,
     linkCustom: String(row.link_custom ?? ""),
@@ -94,6 +97,7 @@ export function toSyncDTO(row: Record<string, unknown>): SyncDTO {
     connection: { id: sync.connectionId, name: String(row.connection_name ?? ""), instanceUrl: String(row.connection_instance_url ?? "") },
     kbIds: sync.kbIds,
     kbNames: sync.kbNames,
+    filters: sync.filters,
     filterQuery: sync.filterQuery,
     linkStyle: sync.linkStyle,
     linkCustom: sync.linkCustom,
@@ -157,6 +161,7 @@ export interface NewSync {
   audience: Audience;
   kbIds: string[];
   kbNames: string[];
+  filters: SyncFilters;
   filterQuery: string;
   linkStyle: LinkStyle;
   linkCustom: string;
@@ -174,8 +179,8 @@ export async function insertSync(sync: NewSync): Promise<boolean> {
   try {
     await database.query(
       `INSERT INTO syncs (id, org_id, connection_id, name, audience, kb_ids, kb_names, filter_query, link_style, link_custom,
-         source_id, source_name, schedule, enabled, next_run_at, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16)`,
+         source_id, source_name, schedule, enabled, next_run_at, created_by, filters)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17::jsonb)`,
       [
         sync.id,
         sync.orgId,
@@ -193,6 +198,7 @@ export async function insertSync(sync: NewSync): Promise<boolean> {
         sync.enabled,
         sync.nextRunAt?.toISOString() ?? null,
         sync.createdBy,
+        JSON.stringify(sync.filters),
       ],
     );
     return true;
@@ -208,6 +214,7 @@ export interface SyncSettingsPatch {
   audience: Audience;
   kbIds: string[];
   kbNames: string[];
+  filters: SyncFilters;
   filterQuery: string;
   linkStyle: LinkStyle;
   linkCustom: string;
@@ -222,7 +229,7 @@ export async function updateSyncSettings(orgId: string, id: string, patch: SyncS
   await database.query(
     `UPDATE syncs SET name = $3, audience = $4, kb_ids = $5::jsonb, kb_names = $6::jsonb, filter_query = $7, link_style = $8,
        link_custom = $9, schedule = $10::jsonb, enabled = $11, next_run_at = $12,
-       fingerprint = CASE WHEN $13 THEN NULL ELSE fingerprint END, connection_id = $14, updated_at = now()
+       fingerprint = CASE WHEN $13 THEN NULL ELSE fingerprint END, connection_id = $14, filters = $15::jsonb, updated_at = now()
      WHERE org_id = $1 AND id = $2`,
     [
       orgId,
@@ -239,6 +246,7 @@ export async function updateSyncSettings(orgId: string, id: string, patch: SyncS
       patch.nextRunAt?.toISOString() ?? null,
       patch.resetFingerprint,
       patch.connectionId,
+      JSON.stringify(patch.filters),
     ],
   );
 }

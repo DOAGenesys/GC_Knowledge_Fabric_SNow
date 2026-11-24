@@ -34,6 +34,7 @@ export function createPgliteDb(pg: PGlite): Db {
 export function useTestDatabase(): TestDatabase {
   const holder = {} as TestDatabase;
 
+  // Starting PGlite compiles its WebAssembly and runs initdb, which gets slow when many test files start at once.
   beforeAll(async () => {
     const pg = await PGlite.create();
     const database = createPgliteDb(pg);
@@ -42,7 +43,7 @@ export function useTestDatabase(): TestDatabase {
     holder.pg = pg;
     holder.db = database;
     holder.query = database.query.bind(database);
-  });
+  }, 120_000);
 
   beforeEach(async () => {
     await holder.pg.exec(`TRUNCATE ${TABLES.join(", ")} CASCADE`);

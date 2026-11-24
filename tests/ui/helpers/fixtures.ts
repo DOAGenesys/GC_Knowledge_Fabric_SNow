@@ -1,7 +1,9 @@
 import type {
   ArticleDTO,
+  ArticleOptionDTO,
   ArticlePage,
   ConnectionDTO,
+  FilterOptionsDTO,
   GcCredentialsDTO,
   GcSourceDTO,
   KnowledgeBaseDTO,
@@ -53,6 +55,7 @@ export function makeSync(overrides: Partial<SyncDTO> = {}): SyncDTO {
     connection: { id: CONNECTION_ID, name: "Acme production", instanceUrl: "https://acme.service-now.com" },
     kbIds: ["kb-1"],
     kbNames: ["Customer Service"],
+    filters: { categories: [], languages: [], articles: null },
     filterQuery: "",
     linkStyle: "csm",
     linkCustom: "",
@@ -99,6 +102,28 @@ export function makeKb(overrides: Partial<KnowledgeBaseDTO> = {}): KnowledgeBase
     suggestedAudience: "csm",
     ...overrides,
   };
+}
+
+export const CATEGORY = { billing: "c".repeat(32), payments: "d".repeat(32), returns: "e".repeat(32) };
+
+export function makeFilterOptions(overrides: Partial<FilterOptionsDTO> = {}): FilterOptionsDTO {
+  return {
+    categories: [
+      { id: CATEGORY.billing, label: "Billing", path: "Billing", kbId: "kb-1", kbName: "Customer Service", count: 70 },
+      { id: CATEGORY.payments, label: "Payments", path: "Billing / Payments", kbId: "kb-1", kbName: "Customer Service", count: 20 },
+      { id: CATEGORY.returns, label: "Returns", path: "Returns", kbId: "kb-2", kbName: "Billing", count: 25 },
+      { id: "", label: "Without a category", path: "Without a category", kbId: "", kbName: "", count: 5 },
+    ],
+    languages: [
+      { code: "en", label: "English", count: 100 },
+      { code: "it", label: "Italian", count: 20 },
+    ],
+    ...overrides,
+  };
+}
+
+export function makeArticleOption(number: string, overrides: Partial<ArticleOptionDTO> = {}): ArticleOptionDTO {
+  return { number, title: `Article ${number}`, kbId: "kb-1", kbName: "Customer Service", category: "General", updatedAt: "2026-11-01 10:00:00", ...overrides };
 }
 
 export function makeSession(setup: Partial<SessionInfo["setup"]> = {}): SessionInfo {

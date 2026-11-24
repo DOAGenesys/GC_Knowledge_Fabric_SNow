@@ -7,11 +7,12 @@ import { apiFetch } from "@/lib/api-client";
 import type { ConnectionDTO } from "@/lib/api-types";
 import { formatRelative, plural } from "@/lib/format";
 import { useConnections } from "@/lib/hooks";
-import { AUTH_TYPES, SN_REQUIREMENTS } from "@/lib/ui-text";
+import { AUTH_TYPES, SN_ADMIN_REQUEST, SN_REQUIREMENTS } from "@/lib/ui-text";
 import { StatusBadge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ErrorCallout } from "../ui/callout";
 import { Card } from "../ui/card";
+import { CopyTextButton } from "../ui/copy-button";
 import { ConfirmDialog } from "../ui/dialog";
 import { EmptyState, Skeleton } from "../ui/feedback";
 import { useToast } from "../ui/toast";
@@ -134,7 +135,7 @@ export function ConnectionsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-[28px] font-medium tracking-tight text-navy">Connections</h1>
-          <p className="mt-1 text-[15px] text-navy/60">Where knowledge comes from, and the credentials syncs use to deliver it.</p>
+          <p className="mt-1 text-[15px] text-navy/60">Connect ServiceNow and Genesys Cloud. You only need to do this once.</p>
         </div>
         <Button variant="primary" onClick={() => setDialog({ open: true, connection: null })} icon={<Plus className="size-4" aria-hidden />}>
           Add ServiceNow connection
@@ -144,8 +145,8 @@ export function ConnectionsPage() {
       <Card>
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-navy/[0.06] px-6 py-5">
           <div>
-            <h2 className="text-lg font-semibold tracking-tight">ServiceNow instances</h2>
-            <p className="mt-1 text-sm text-navy/60">Each connection can feed several syncs, for CSM and ITSM knowledge alike.</p>
+            <h2 className="text-lg font-semibold tracking-tight">ServiceNow</h2>
+            <p className="mt-1 text-sm text-navy/60">Where the articles come from. One connection can feed several syncs.</p>
           </div>
         </div>
         {isLoading ? (
@@ -165,8 +166,8 @@ export function ConnectionsPage() {
             />
           </div>
         ) : connections.length === 0 ? (
-          <EmptyState illustration="/brand/icon-connect.svg" title="No ServiceNow instance yet" action={<Button onClick={() => setDialog({ open: true, connection: null })}>Connect ServiceNow</Button>}>
-            Add your instance with an integration account that can read knowledge. We test it before saving.
+          <EmptyState illustration="/brand/icon-connect.svg" title="ServiceNow isn't connected yet" action={<Button onClick={() => setDialog({ open: true, connection: null })}>Connect ServiceNow</Button>}>
+            You need your ServiceNow address and a user that can read knowledge. We check that it works before saving.
           </EmptyState>
         ) : (
           <ul className="divide-y divide-navy/[0.06]">
@@ -182,20 +183,21 @@ export function ConnectionsPage() {
           </ul>
         )}
         <details className="group border-t border-navy/[0.06] px-6 py-4">
-          <summary className="flex list-none items-center justify-between text-sm font-medium text-navy [&::-webkit-details-marker]:hidden">
-            What the ServiceNow account needs
+          <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-navy [&::-webkit-details-marker]:hidden">
+            What the ServiceNow user needs
             <ChevronDown className="size-4 text-navy/50 transition-transform group-open:rotate-180" aria-hidden />
           </summary>
           <ul className="mt-3 space-y-2">
             {SN_REQUIREMENTS.map((item) => (
               <li key={item.name} className="text-[13px] leading-relaxed text-navy/65">
-                <code className="rounded bg-nimbus px-1.5 py-0.5 font-mono text-[12px] text-navy">{item.name}</code> {item.detail}
+                <span className="font-medium text-navy">{item.name}.</span> {item.detail}
               </li>
             ))}
-            <li className="text-[13px] leading-relaxed text-navy/65">
-              The account must also be able to read the knowledge bases you sync (their &quot;Can read&quot; user criteria). Only published, unexpired articles are synced.
-            </li>
           </ul>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <CopyTextButton value={SN_ADMIN_REQUEST}>Copy a request for your ServiceNow admin</CopyTextButton>
+            <span className="text-[13px] text-navy/50">Paste it into an email or a ticket.</span>
+          </div>
         </details>
       </Card>
 

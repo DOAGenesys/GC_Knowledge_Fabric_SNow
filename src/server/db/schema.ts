@@ -61,6 +61,7 @@ export const SCHEMA_STATEMENTS: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS syncs_due_idx ON syncs (next_run_at) WHERE enabled`,
   `CREATE INDEX IF NOT EXISTS syncs_org_idx ON syncs (org_id)`,
+  `ALTER TABLE syncs ADD COLUMN IF NOT EXISTS filters jsonb NOT NULL DEFAULT '{}'::jsonb`,
   `CREATE TABLE IF NOT EXISTS sync_runs (
     id text PRIMARY KEY,
     sync_id text NOT NULL REFERENCES syncs(id) ON DELETE CASCADE,

@@ -4,9 +4,10 @@ Keeps Genesys Cloud Knowledge in step with your ServiceNow knowledge bases. It w
 
 - **Sign in with Genesys Cloud.** No separate accounts.
 - **Connect ServiceNow** with basic auth, OAuth client credentials or an API key. The connection is tested before it's saved.
-- **Create a sync in four steps:** pick knowledge bases (optionally narrowed with an encoded query, with a live preview), choose or create a knowledge source, decide where article links should point (CSM portal, Employee Center, …) and set a schedule.
-- **Schedules:** every few minutes or hours, daily, on chosen weekdays (in your time zone), or manual only.
-- **Sync now** checks for changes and uploads only what changed. **Full rebuild** replaces the whole source.
+- **Create a sync in three steps:** pick knowledge bases, then sync all their published articles (narrowed down by category or language if you like) or only the articles you choose. Find those by searching, or paste up to 2,000 article numbers at once: a list, a spreadsheet column or a query copied from ServiceNow all work. A live count shows what will be synced. Choose or create a knowledge source and where article links open (the portal the knowledge bases are published on is suggested), then set a schedule. ServiceNow admins can also paste a condition copied from a ServiceNow list.
+- **Add articles in steps.** Choosing more articles or categories later keeps the ones already synced: the next run uploads only the new ones. Removing an article from the list removes it from Genesys Cloud.
+- **Schedules:** several times a day, once a day, on chosen weekdays (in your time zone), or only by hand.
+- **Sync now** checks for changes and uploads only what changed. **Re-upload all articles** (in a sync's settings) sends everything again and replaces the whole source.
 - **Errors are explained in plain language**, each with a fix-it link. You also see per-article status and a history of every run.
 
 ## How it works
@@ -14,7 +15,7 @@ Keeps Genesys Cloud Knowledge in step with your ServiceNow knowledge bases. It w
 | Piece | What it does |
 | --- | --- |
 | Sign-in | Genesys Cloud OAuth (Code Authorization with PKCE), used only to identify you and your organization. |
-| Sync credentials | One OAuth **Client Credentials** client per organization, encrypted at rest. Every Knowledge call uses it, scheduled or manual, so syncs run without anyone signed in. |
+| Genesys Cloud access for syncs | One OAuth **Client Credentials** client per organization, encrypted at rest. Every Knowledge call uses it, scheduled or manual, so syncs run without anyone signed in. |
 | Scheduler | A Vercel Schedule calls `/api/cron/tick` every 15 minutes. The tick finds due syncs, runs a quick change check against ServiceNow and starts a run only when something changed. |
 | Runs | Durable [Vercel Workflow](https://vercel.com/docs/workflow) runs. Each run lists articles, compares them with what was uploaded last time, opens a Genesys Cloud synchronization, uploads changed files in batches, deletes removed ones, commits and waits for the outcome. Runs survive restarts and can be cancelled. |
 | Storage | Neon Postgres (connections, syncs, runs, per-article manifest). The schema is created automatically. |
@@ -22,7 +23,7 @@ Keeps Genesys Cloud Knowledge in step with your ServiceNow knowledge bases. It w
 ### Safety rails
 
 - **Mass-deletion guard.** If ServiceNow suddenly returns no articles for a sync that has files in Genesys Cloud, the run stops with "ServiceNow returned no articles" and nothing is deleted. That is usually an account that lost read access.
-- **Full rebuilds are all-or-nothing.** If any article can't be uploaded, the round is cancelled and the source stays as it was.
+- **Full re-uploads are all-or-nothing.** If any article can't be uploaded, the round is cancelled and the source stays as it was.
 - **Retries:** rate limits and transient failures (HTTP 429/5xx, timeouts) are retried with backoff. Failing syncs back off before the next attempt.
 - **Housekeeping:** stale runs are recovered and rounds left open by crashed runs are cleaned up.
 - **Limits:** each sync is capped at 20,000 articles. Only published, active and unexpired articles are synced.
@@ -47,7 +48,7 @@ The ServiceNow account needs:
 - Permission to read every knowledge base you sync (each knowledge base's "Can read" user criteria).
 - Optionally, the Knowledge Management REST API plugin (`sn_km_api`), so template-based articles sync with their full body.
 
-Syncs include published, active articles whose "Valid to" date hasn't passed. Articles with an empty "Valid to" are included as well, although ServiceNow's own search hides them. Add `valid_toISNOTEMPTY` to a sync's filter to leave them out.
+Syncs include published, active articles whose "Valid to" date hasn't passed. Articles with an empty "Valid to" are included as well, although ServiceNow's own search hides them. Add `valid_toISNOTEMPTY` as a sync's ServiceNow condition to leave them out.
 
 Authentication options:
 

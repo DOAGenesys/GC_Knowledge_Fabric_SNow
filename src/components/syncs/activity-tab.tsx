@@ -34,17 +34,12 @@ function RunDetails({ run }: { run: RunDTO }) {
 
   return (
     <div className="space-y-4 border-t border-navy/[0.06] bg-nimbus/50 px-5 py-4">
+      {run.note && run.status !== "noop" ? <p className="text-sm text-navy/75">{run.note}</p> : null}
       {run.error ? (
         <div className="rounded-xl bg-white p-4 ring-1 ring-danger/15">
           <p className="text-sm font-semibold text-danger">{run.error.title}</p>
           <p className="mt-1 text-sm text-navy/75">{run.error.message}</p>
           {run.error.hint ? <p className="mt-1 text-sm text-navy/60">{run.error.hint}</p> : null}
-          {run.error.detail ? (
-            <details className="mt-3">
-              <summary className="text-xs font-medium text-navy/50">Technical details</summary>
-              <pre className="mt-2 overflow-x-auto rounded-lg bg-nimbus p-3 font-mono text-[11px] whitespace-pre-wrap text-navy/70">{run.error.detail}</pre>
-            </details>
-          ) : null}
         </div>
       ) : null}
 
@@ -87,29 +82,44 @@ function RunDetails({ run }: { run: RunDTO }) {
         </div>
         {run.requestedBy ? (
           <div className="flex gap-2">
-            <dt className="text-navy/50">Requested by</dt>
+            <dt className="text-navy/50">Started by</dt>
             <dd className="text-navy">{run.requestedBy}</dd>
           </div>
         ) : null}
-        {run.gcSyncId ? (
-          <div className="flex items-center gap-2">
-            <dt className="text-navy/50">Genesys Cloud sync</dt>
-            <dd className="flex min-w-0 items-center gap-1 font-mono text-[12px] text-navy">
-              <span className="truncate">{run.gcSyncId}</span>
-              <CopyButton value={run.gcSyncId} label="Copy synchronization ID" size="xs" />
-            </dd>
-          </div>
-        ) : null}
-        {run.gcSyncStatus ? (
-          <div className="flex gap-2">
-            <dt className="text-navy/50">Genesys Cloud status</dt>
-            <dd className="text-navy">
-              {run.gcSyncStatus}
-              {run.gcIngestionStatus ? ` · ingestion ${run.gcIngestionStatus}` : ""}
-            </dd>
-          </div>
-        ) : null}
       </dl>
+
+      {run.error?.detail || run.gcSyncId || run.gcSyncStatus ? (
+        <details className="text-[13px]">
+          <summary className="cursor-pointer text-xs font-medium text-navy/50 hover:text-navy/70">Technical details (for support)</summary>
+          <dl className="mt-2 space-y-1.5">
+            {run.error ? (
+              <div className="flex gap-2">
+                <dt className="text-navy/50">Error code</dt>
+                <dd className="font-mono text-[12px] text-navy">{run.error.code}</dd>
+              </div>
+            ) : null}
+            {run.gcSyncId ? (
+              <div className="flex items-center gap-2">
+                <dt className="text-navy/50">Genesys Cloud synchronization</dt>
+                <dd className="flex min-w-0 items-center gap-1 font-mono text-[12px] text-navy">
+                  <span className="truncate">{run.gcSyncId}</span>
+                  <CopyButton value={run.gcSyncId} label="Copy synchronization ID" size="xs" />
+                </dd>
+              </div>
+            ) : null}
+            {run.gcSyncStatus ? (
+              <div className="flex gap-2">
+                <dt className="text-navy/50">Genesys Cloud status</dt>
+                <dd className="text-navy">
+                  {run.gcSyncStatus}
+                  {run.gcIngestionStatus ? ` · ingestion ${run.gcIngestionStatus}` : ""}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+          {run.error?.detail ? <pre className="mt-2 overflow-x-auto rounded-lg bg-white p-3 font-mono text-[11px] whitespace-pre-wrap text-navy/70">{run.error.detail}</pre> : null}
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -167,7 +177,7 @@ export function ActivityTab({ sync }: { sync: SyncDTO }) {
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium text-navy">
                   {TRIGGER_LABEL[run.trigger]}
-                  {run.mode === "full" ? " · Full rebuild" : ""}
+                  {run.mode === "full" ? " · Full re-upload" : ""}
                 </span>
                 <span className="block truncate text-[13px] text-navy/55">{run.error && run.status === "failed" ? run.error.message : runSummary(run)}</span>
               </span>

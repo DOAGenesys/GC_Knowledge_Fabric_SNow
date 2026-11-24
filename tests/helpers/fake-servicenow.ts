@@ -24,7 +24,11 @@ export interface FakeArticle {
   article_type: "text" | "html" | "wiki";
   meta: string;
   kb: string;
+  /** Category label as shown on the article. */
   category: string;
+  /** kb_category sys_id, "" for articles without a category. */
+  categoryId: string;
+  language: string;
   sys_updated_on: string;
   workflow_state: string;
   active: boolean;
@@ -32,6 +36,15 @@ export interface FakeArticle {
   /** What the Knowledge Management API renders (templates, wiki). Defaults to `text`. */
   rendered?: string;
 }
+
+export interface FakeCategory {
+  sys_id: string;
+  label: string;
+  full_category: string;
+  kb: string;
+}
+
+const LANGUAGE_NAMES: Record<string, string> = { en: "English", it: "Italian", de: "German", fr: "French", es: "Spanish", ja: "Japanese" };
 
 interface InjectedFailure {
   path: RegExp;
@@ -60,9 +73,12 @@ export class FakeServiceNow {
   auth: FakeSnAuth;
   readonly kbs = new Map<string, FakeKb>();
   readonly articles = new Map<string, FakeArticle>();
+  readonly categories = new Map<string, FakeCategory>();
   kmApiEnabled = true;
   statsEnabled = true;
   portalsEnabled = true;
+  /** False simulates an instance where kb_knowledge has no usable language field. */
+  languageField = true;
   hibernating = false;
   /**
    * Reference fields come back as {link, value} unless sysparm_exclude_reference_link=true, which
@@ -90,9 +106,21 @@ export class FakeServiceNow {
     return kb;
   }
 
+  /** A category in `kb`; with a parent its full path reads "Parent / Child", as in ServiceNow. */
+  addCategory(kb: FakeKb, label: string, parent?: FakeCategory): FakeCategory {
+    const category: FakeCategory = { sys_id: sysId(), label, full_category: parent ? `${parent.full_category} / ${label}` : label, kb: kb.sys_id };
+    this.categories.set(category.sys_id, category);
+    return category;
+  }
+
+  private categoryNamed(kb: FakeKb, label: string): FakeCategory {
+    return [...this.categories.values()].find((category) => category.kb === kb.sys_id && category.label === label) ?? this.addCategory(kb, label);
+  }
+
   addArticle(kb: FakeKb, partial: Partial<FakeArticle> = {}): FakeArticle {
     this.articleCounter += 1;
     this.clock += 60_000;
+    const categoryId = partial.categoryId ?? this.categoryNamed(kb, partial.category ?? "General").sys_id;
     const article: FakeArticle = {
       sys_id: sysId(),
       number: `KB00${this.articleCounter}`,
@@ -102,7 +130,9 @@ export class FakeServiceNow {
       article_type: "text",
       meta: "",
       kb: kb.sys_id,
-      category: "General",
+      category: partial.category ?? this.categories.get(categoryId)?.label ?? "",
+      categoryId,
+      language: "en",
       sys_updated_on: stamp(new Date(this.clock)),
       workflow_state: "published",
       active: true,
@@ -171,6 +201,7 @@ export class FakeServiceNow {
     try {
       if (url.pathname === "/api/now/table/kb_knowledge_base") return this.table(this.kbRecords(), url.searchParams);
       if (url.pathname === "/api/now/table/kb_knowledge") return this.table(this.articleRecords(), url.searchParams);
+      if (url.pathname === "/api/now/table/kb_category") return this.table(this.categoryRecords(), url.searchParams);
       if (url.pathname === "/api/now/stats/kb_knowledge") return this.stats(url.searchParams);
       if (url.pathname === "/api/now/table/m2m_sp_portal_knowledge_base") return this.portals(url.searchParams);
       const km = url.pathname.match(/^\/api\/sn_km_api\/knowledge\/articles\/([0-9a-f]{32})$/);
@@ -230,11 +261,29 @@ export class FakeServiceNow {
       sys_updated_on: article.sys_updated_on,
       kb_knowledge_base: article.kb,
       "kb_knowledge_base.title": this.kbs.get(article.kb)?.title ?? "",
+      kb_category: article.categoryId,
       "kb_category.label": article.category,
+      language: article.language,
       workflow_state: article.workflow_state,
       active: String(article.active),
       valid_to: article.valid_to,
     }));
+  }
+
+  private categoryRecords(): Array<Record<string, string>> {
+    return [...this.categories.values()].map((category) => ({
+      sys_id: category.sys_id,
+      label: category.label,
+      full_category: category.full_category,
+      parent_id: category.kb,
+    }));
+  }
+
+  private displayValue(field: string, value: string): string {
+    if (field === "kb_knowledge_base") return this.kbs.get(value)?.title ?? "";
+    if (field === "kb_category") return this.categories.get(value)?.label ?? "";
+    if (field === "language") return LANGUAGE_NAMES[value] ?? value;
+    return value;
   }
 
   private table(records: Array<Record<string, string>>, params: URLSearchParams): Response {
@@ -268,13 +317,27 @@ export class FakeServiceNow {
 
   private stats(params: URLSearchParams): Response {
     if (!this.statsEnabled) return json({ error: { message: "Insufficient rights to query aggregate" } }, 403);
+    const fields = (params.get("sysparm_group_by") ?? "kb_knowledge_base").split(",").filter(Boolean);
+    const groupable = new Set(["kb_knowledge_base", "kb_category", ...(this.languageField ? ["language"] : [])]);
+    const unknown = fields.find((field) => !groupable.has(field));
+    if (unknown) return json({ error: { message: `Invalid group by field: ${unknown}`, detail: null }, status: "failure" }, 400);
+    const withDisplay = params.get("sysparm_display_value") === "all";
     const { predicate } = this.parseQuery(params.get("sysparm_query") ?? "");
-    const counts = new Map<string, number>();
+    const groups = new Map<string, { values: string[]; count: number }>();
     for (const record of this.articleRecords().filter(predicate)) {
-      counts.set(record.kb_knowledge_base!, (counts.get(record.kb_knowledge_base!) ?? 0) + 1);
+      const values = fields.map((field) => record[field] ?? "");
+      const key = values.join("|");
+      const group = groups.get(key) ?? { values, count: 0 };
+      group.count += 1;
+      groups.set(key, group);
     }
     return json({
-      result: [...counts].map(([kb, count]) => ({ stats: { count: String(count) }, groupby_fields: [{ field: "kb_knowledge_base", value: kb }] })),
+      result: [...groups.values()].map(({ values, count }) => ({
+        stats: { count: String(count) },
+        groupby_fields: fields.map((field, index) =>
+          withDisplay ? { field, value: values[index], display_value: this.displayValue(field, values[index]!) } : { field, value: values[index] },
+        ),
+      })),
     });
   }
 

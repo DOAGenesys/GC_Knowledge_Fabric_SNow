@@ -40,7 +40,7 @@ describe("ServiceNow connections", () => {
     expect(productionRow.getByText("Connected")).toBeTruthy();
     expect(screen.getByText("Can't connect")).toBeTruthy();
     expect(screen.getByText("ServiceNow rejected the credentials.")).toBeTruthy();
-    expect(screen.getByText(/^Username & password · svc_knowledge · Used by 2 syncs · Checked .+/)).toBeTruthy();
+    expect(screen.getByText(/^Username and password · svc_knowledge · Used by 2 syncs · Checked .+/)).toBeTruthy();
     expect(screen.getByText("OAuth client · client-abc · Not used yet")).toBeTruthy();
 
     const link = screen.getByRole("link", { name: "acme.service-now.com" });
@@ -49,8 +49,19 @@ describe("ServiceNow connections", () => {
 
     expect(screen.getByRole("button", { name: "Delete the syncs that use this connection first" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: "Delete Acme staging" })).toHaveProperty("disabled", false);
-    expect(screen.getByText("What the ServiceNow account needs")).toBeTruthy();
-    expect(screen.getByText("snc_platform_rest_api_access")).toBeTruthy();
+    const needs = screen.getByText("What the ServiceNow user needs").closest("details")!;
+    expect(within(needs).getByText("Can read the knowledge bases.")).toBeTruthy();
+    expect(within(needs).getByText(/snc_platform_rest_api_access/)).toBeTruthy();
+  });
+
+  it("copies a ready-made request for the ServiceNow admin", async () => {
+    setup();
+    await screen.findByText("Acme production");
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Copy a request for your ServiceNow admin" })));
+    const request = String(vi.mocked(navigator.clipboard.writeText).mock.calls.at(-1)?.[0]);
+    expect(request).toContain("knowledge");
+    expect(request).toContain("snc_platform_rest_api_access");
+    expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy();
   });
 
   it("tests connections and reports the outcome", async () => {
@@ -84,18 +95,47 @@ describe("ServiceNow connections", () => {
     const api = setup({ "POST /api/connections": { status: 201, body: { connection: created } } });
     fireEvent.click(await screen.findByRole("button", { name: "Add ServiceNow connection" }));
     expect(dialog().getByText("Connect ServiceNow")).toBeTruthy();
-    expect(dialog().getByText("A ServiceNow integration user with basic authentication.")).toBeTruthy();
+    expect(dialog().getByText("A ServiceNow user set aside for this app, that can read your knowledge bases.")).toBeTruthy();
+    expect(dialog().queryByRole("radio")).toBeNull();
 
-    fireEvent.change(dialog().getByLabelText("Name"), { target: { value: " Acme EU " } });
-    fireEvent.change(dialog().getByLabelText("Instance"), { target: { value: "acme-eu" } });
+    fireEvent.change(dialog().getByLabelText("ServiceNow address"), { target: { value: "acme-eu" } });
+    expect(dialog().getByLabelText(/^Name/).getAttribute("placeholder")).toBe("Acme-eu ServiceNow");
+    fireEvent.change(dialog().getByLabelText(/^Name/), { target: { value: " Acme EU " } });
     fireEvent.change(dialog().getByLabelText("Username"), { target: { value: "svc_eu" } });
     fireEvent.change(dialog().getByLabelText("Password"), { target: { value: "not-a-real-password" } });
-    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Test and connect" })));
+    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Check and connect" })));
 
     expect(await screen.findByText("ServiceNow connected")).toBeTruthy();
     expect(api.callsTo("POST", "/api/connections")[0]?.body).toEqual({ name: "Acme EU", instanceUrl: "acme-eu", auth: { type: "basic", username: "svc_eu", password: "not-a-real-password" } });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByText("Acme EU")).toBeTruthy();
+  });
+
+  it("names a new connection after its address and offers the other sign-in methods on request", async () => {
+    const api = setup({ "POST /api/connections": { status: 201, body: { connection: makeConnection({ id: "44444444-4444-4444-8444-444444444444", name: "Contoso ServiceNow" }) } } });
+    fireEvent.click(await screen.findByRole("button", { name: "Add ServiceNow connection" }));
+    fireEvent.change(dialog().getByLabelText("ServiceNow address"), { target: { value: "https://contoso.service-now.com/now/nav/ui/home" } });
+
+    fireEvent.click(dialog().getByRole("button", { name: "Use an OAuth client or API key instead" }));
+    expect(dialog().queryByRole("button", { name: "Use an OAuth client or API key instead" })).toBeNull();
+    expect((dialog().getByRole("radio", { name: /Username and password/ }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(dialog().getByRole("radio", { name: /OAuth client/ }));
+    expect(dialog().getByText(/An OAuth client from ServiceNow's Application Registry/)).toBeTruthy();
+    const steps = dialog().getByText("Steps for your ServiceNow admin").closest("details")!;
+    expect(within(steps).getByText(/System OAuth > Application Registry/)).toBeTruthy();
+
+    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Copy a request for your admin" })));
+    expect(String(vi.mocked(navigator.clipboard.writeText).mock.calls.at(-1)?.[0])).toContain("snc_platform_rest_api_access");
+
+    fireEvent.change(dialog().getByLabelText("Client ID"), { target: { value: " cid-not-real " } });
+    fireEvent.change(dialog().getByLabelText("Client secret"), { target: { value: "not-a-real-secret" } });
+    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Check and connect" })));
+    expect(await screen.findByText("ServiceNow connected")).toBeTruthy();
+    expect(api.callsTo("POST", "/api/connections")[0]?.body).toEqual({
+      name: "Contoso ServiceNow",
+      instanceUrl: "https://contoso.service-now.com/now/nav/ui/home",
+      auth: { type: "oauth", clientId: "cid-not-real", clientSecret: "not-a-real-secret" },
+    });
   });
 
   it("shows field errors and general errors inside the dialog", async () => {
@@ -109,12 +149,12 @@ describe("ServiceNow connections", () => {
       },
     });
     fireEvent.click(await screen.findByRole("button", { name: "Add ServiceNow connection" }));
-    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Test and connect" })));
+    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Check and connect" })));
     expect(await screen.findByText("Enter a ServiceNow instance.")).toBeTruthy();
     expect(dialog().getByText("Enter the password.")).toBeTruthy();
-    expect(dialog().getByLabelText("Instance").getAttribute("aria-invalid")).toBe("true");
+    expect(dialog().getByLabelText("ServiceNow address").getAttribute("aria-invalid")).toBe("true");
 
-    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Test and connect" })));
+    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Check and connect" })));
     expect(await screen.findByText("ServiceNow rejected the credentials")).toBeTruthy();
     expect(screen.getByRole("dialog")).toBeTruthy();
 
@@ -130,8 +170,8 @@ describe("ServiceNow connections", () => {
     expect(dialog().getByText("Leave blank to keep the saved value.")).toBeTruthy();
     expect(dialog().getByLabelText("Password").getAttribute("placeholder")).toBe("••••••••");
 
-    fireEvent.change(dialog().getByLabelText("Name"), { target: { value: "Acme prod" } });
-    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Test and save" })));
+    fireEvent.change(dialog().getByLabelText(/^Name/), { target: { value: "Acme prod" } });
+    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Check and save" })));
     expect(await screen.findByText("Connection updated")).toBeTruthy();
     expect(api.callsTo("PUT", `/api/connections/${CONNECTION_ID}`)[0]?.body).toEqual({ name: "Acme prod", instanceUrl: "https://acme.service-now.com", auth: { type: "basic", username: "svc_knowledge" } });
     expect(await screen.findByText("Acme prod")).toBeTruthy();
@@ -144,17 +184,17 @@ describe("ServiceNow connections", () => {
     expect(dialog().getByText("Leave blank to keep the saved value.")).toBeTruthy();
 
     fireEvent.click(dialog().getByRole("radio", { name: /API key/ }));
-    expect(dialog().getByText("Sent in the x-sn-apikey header.")).toBeTruthy();
+    expect(dialog().getByText("A ServiceNow REST API key. Needs the Washington DC release or later.")).toBeTruthy();
     expect(dialog().queryByText("Leave blank to keep the saved value.")).toBeNull();
     fireEvent.change(dialog().getByLabelText("API key"), { target: { value: "not-a-real-api-key" } });
-    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Test and save" })));
+    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Check and save" })));
     expect(await screen.findByText("Connection updated")).toBeTruthy();
     expect((api.callsTo("PUT", `/api/connections/${STAGING_ID}`)[0]?.body as { auth: unknown }).auth).toEqual({ type: "apikey", apiKey: "not-a-real-api-key" });
 
     fireEvent.click(screen.getByRole("button", { name: "Edit Acme staging" }));
     fireEvent.click(dialog().getByRole("radio", { name: /OAuth client/ }));
     expect((dialog().getByLabelText("Client ID") as HTMLInputElement).value).toBe("");
-    fireEvent.click(dialog().getByRole("radio", { name: /Username & password/ }));
+    fireEvent.click(dialog().getByRole("radio", { name: /Username and password/ }));
     expect(dialog().getByLabelText("Password").getAttribute("placeholder")).toBe("");
   });
 
@@ -179,7 +219,7 @@ describe("ServiceNow connections", () => {
 
   it("invites the first connection", async () => {
     setup({ "GET /api/connections": { body: { connections: [] } } });
-    expect(await screen.findByText("No ServiceNow instance yet")).toBeTruthy();
+    expect(await screen.findByText("ServiceNow isn't connected yet")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Connect ServiceNow" }));
     expect(dialog().getByText("Connect ServiceNow", { selector: "h2" })).toBeTruthy();
   });
@@ -201,21 +241,26 @@ describe("Genesys Cloud sync credentials", () => {
     });
     expect(await genesysCard().findByText("Not set up")).toBeTruthy();
     expect(genesysCard().getByText("knowledge:synchronization:upload")).toBeTruthy();
-    expect(genesysCard().getByText("optional")).toBeTruthy();
+    expect(genesysCard().getByText("optional, shows file counts")).toBeTruthy();
 
     await act(async () => fireEvent.click(genesysCard().getByRole("button", { name: "Copy required permissions" })));
     const copied = String(vi.mocked(navigator.clipboard.writeText).mock.calls[0]?.[0]);
     expect(copied.split("\n")).toHaveLength(7);
     expect(copied).not.toContain("sourceFileCount");
 
-    const save = genesysCard().getByRole("button", { name: "Verify and save" });
+    await act(async () => fireEvent.click(genesysCard().getByRole("button", { name: "Copy a request for your Genesys Cloud admin" })));
+    const request = String(vi.mocked(navigator.clipboard.writeText).mock.calls[1]?.[0]);
+    expect(request).toContain("Client Credentials");
+    expect(request).toContain("knowledge:synchronization:deleteFile");
+
+    const save = genesysCard().getByRole("button", { name: "Check and save" });
     expect(save).toHaveProperty("disabled", true);
     fireEvent.change(genesysCard().getByLabelText("Client ID"), { target: { value: " 9a8b7c6d-0000-4000-8000-000000000002 " } });
     fireEvent.change(genesysCard().getByLabelText("Client secret"), { target: { value: "not-a-real-secret" } });
     expect(save).toHaveProperty("disabled", false);
     await act(async () => fireEvent.click(save));
 
-    expect(await screen.findByText("Genesys Cloud credentials saved")).toBeTruthy();
+    expect(await screen.findByText("Genesys Cloud access saved")).toBeTruthy();
     expect(api.callsTo("PUT", "/api/genesys/credentials")[0]?.body).toEqual({ clientId: "9a8b7c6d-0000-4000-8000-000000000002", clientSecret: "not-a-real-secret" });
     expect(genesysCard().getByText("Connected")).toBeTruthy();
     expect(genesysCard().getByText("9a8b7c6d-0000-4000-8000-000000000002")).toBeTruthy();
@@ -234,7 +279,7 @@ describe("Genesys Cloud sync credentials", () => {
   it("explains credentials that stopped working", async () => {
     setup({ "GET /api/genesys/credentials": { body: { credentials: makeCredentials({ status: "error", message: "The OAuth client was deleted." }) } } });
     expect(await genesysCard().findByText("Not working")).toBeTruthy();
-    expect(genesysCard().getByText("These credentials stopped working")).toBeTruthy();
+    expect(genesysCard().getByText("This access stopped working")).toBeTruthy();
     expect(genesysCard().getByText("The OAuth client was deleted.")).toBeTruthy();
     expect(genesysCard().getByText("Last checked")).toBeTruthy();
   });
@@ -253,10 +298,10 @@ describe("Genesys Cloud sync credentials", () => {
     await genesysCard().findByText("Not set up");
     fireEvent.change(genesysCard().getByLabelText("Client ID"), { target: { value: "not-a-guid" } });
     fireEvent.change(genesysCard().getByLabelText("Client secret"), { target: { value: "not-a-real-secret" } });
-    await act(async () => fireEvent.click(genesysCard().getByRole("button", { name: "Verify and save" })));
+    await act(async () => fireEvent.click(genesysCard().getByRole("button", { name: "Check and save" })));
     expect(await genesysCard().findByText("Enter the client ID as a GUID.")).toBeTruthy();
 
-    await act(async () => fireEvent.click(genesysCard().getByRole("button", { name: "Verify and save" })));
+    await act(async () => fireEvent.click(genesysCard().getByRole("button", { name: "Check and save" })));
     expect(await genesysCard().findByText("Wrong organization")).toBeTruthy();
   });
 
@@ -271,12 +316,12 @@ describe("Genesys Cloud sync credentials", () => {
       },
     });
     fireEvent.click(await genesysCard().findByRole("button", { name: "Remove" }));
-    expect(dialog().getByText("Remove Genesys Cloud credentials?")).toBeTruthy();
-    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Remove credentials" })));
+    expect(dialog().getByText("Remove Genesys Cloud access?")).toBeTruthy();
+    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Remove access" })));
     expect(await screen.findByText("Couldn't remove")).toBeTruthy();
 
-    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Remove credentials" })));
-    expect(await screen.findByText("Credentials removed")).toBeTruthy();
+    await act(async () => fireEvent.click(dialog().getByRole("button", { name: "Remove access" })));
+    expect(await screen.findByText("Access removed")).toBeTruthy();
     expect(genesysCard().getByText("Not set up")).toBeTruthy();
   });
 

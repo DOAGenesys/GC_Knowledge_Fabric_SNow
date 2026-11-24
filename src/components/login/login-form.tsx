@@ -35,8 +35,10 @@ export function LoginForm({
   defaultRegion: string;
   defaultClientId: string;
 }) {
+  const presetClientId = UUID.test(defaultClientId) ? defaultClientId : "";
   const [region, setRegion] = useState(defaultRegion);
   const [clientId, setClientId] = useState(defaultClientId);
+  const [showClientId, setShowClientId] = useState(!presetClientId);
   const [clientIdError, setClientIdError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
 
@@ -44,18 +46,22 @@ export function LoginForm({
     try {
       const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null") as { region?: string; clientId?: string } | null;
       if (saved?.region && GENESYS_REGIONS.some((item) => item.host === saved.region)) setRegion(saved.region);
-      if (saved?.clientId && UUID.test(saved.clientId)) setClientId(saved.clientId);
+      if (saved?.clientId && UUID.test(saved.clientId)) {
+        setClientId(saved.clientId);
+        if (saved.clientId !== presetClientId) setShowClientId(true);
+      }
     } catch {
       // Nothing remembered yet.
     }
     if (notice?.tone === "danger") log.warn(`Sign-in problem shown: ${notice.title}`);
-  }, [notice]);
+  }, [notice, presetClientId]);
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     const value = clientId.trim();
     if (!UUID.test(value)) {
       event.preventDefault();
-      setClientIdError("Enter the OAuth client ID: a GUID like 1a2b3c4d-1234-5678-9abc-def012345678.");
+      setShowClientId(true);
+      setClientIdError("Enter the sign-in client ID. It looks like 1a2b3c4d-1234-5678-9abc-def012345678.");
       return;
     }
     setClientIdError(undefined);
@@ -83,7 +89,7 @@ export function LoginForm({
 
         <form method="get" action="/api/auth/login" onSubmit={onSubmit} className="mt-7 space-y-5" noValidate>
           {returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null}
-          <Field label="Region">
+          <Field label="Region" hint="Match the address you open Genesys Cloud with. For example, apps.mypurecloud.de is Frankfurt.">
             {(props) => (
               <Select {...props} name="region" value={region} onChange={(event) => setRegion(event.target.value)}>
                 {AREAS.map((area) => (
@@ -98,28 +104,37 @@ export function LoginForm({
               </Select>
             )}
           </Field>
-          <Field label="OAuth client ID" hint="The Code Authorization (PKCE) client registered for this app." error={clientIdError}>
-            {(props) => (
-              <Input
-                {...props}
-                name="clientId"
-                value={clientId}
-                onChange={(event) => setClientId(event.target.value)}
-                placeholder="00000000-0000-0000-0000-000000000000"
-                autoComplete="off"
-                spellCheck={false}
-                className="font-mono text-[14px]"
-              />
-            )}
-          </Field>
+          {showClientId ? (
+            <Field label="Sign-in client ID" hint="Your Genesys Cloud admin gets it when setting up this app (steps below)." error={clientIdError}>
+              {(props) => (
+                <Input
+                  {...props}
+                  name="clientId"
+                  value={clientId}
+                  onChange={(event) => setClientId(event.target.value)}
+                  placeholder="00000000-0000-0000-0000-000000000000"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="font-mono text-[14px]"
+                />
+              )}
+            </Field>
+          ) : (
+            <input type="hidden" name="clientId" value={clientId} />
+          )}
           <Button type="submit" variant="primary" size="lg" className="w-full" loading={submitting}>
             Continue to Genesys Cloud {submitting ? null : <ArrowRight className="size-4" aria-hidden />}
           </Button>
+          {!showClientId ? (
+            <button type="button" onClick={() => setShowClientId(true)} className="block w-full text-center text-[13px] font-medium text-navy/50 hover:text-navy">
+              Use a different sign-in client
+            </button>
+          ) : null}
         </form>
 
         <details className="group mt-7 rounded-xl bg-nimbus px-4 py-3 text-sm text-navy/70 open:pb-4">
-          <summary className="flex list-none items-center justify-between font-medium text-navy [&::-webkit-details-marker]:hidden">
-            First time here? Set up the OAuth client
+          <summary className="flex cursor-pointer list-none items-center justify-between font-medium text-navy [&::-webkit-details-marker]:hidden">
+            Setting up this app for the first time? (for admins)
             <ChevronDown className="size-4 text-navy/50 transition-transform group-open:rotate-180" aria-hidden />
           </summary>
           <ol className="mt-3 list-decimal space-y-2 pl-5 leading-relaxed marker:text-navy/40">
@@ -137,9 +152,9 @@ export function LoginForm({
               </span>
             </li>
             <li>
-              Scopes: <code className="font-mono text-[12px]">users:readonly</code> and <code className="font-mono text-[12px]">organization:readonly</code>. Sign-in only
-              confirms who you are; syncs use separate credentials you add later.
+              Scopes: <code className="font-mono text-[12px]">users:readonly</code> and <code className="font-mono text-[12px]">organization:readonly</code>.
             </li>
+            <li>Share the client ID with your team. Signing in only confirms who you are; syncs get their own access later, on the Connections page.</li>
           </ol>
         </details>
       </div>
