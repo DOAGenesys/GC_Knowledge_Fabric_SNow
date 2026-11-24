@@ -166,7 +166,7 @@ export function SettingsTab({ sync }: { sync: SyncDTO }) {
         ) : null}
         <KnowledgeBasePicker connectionId={form.connectionId} selected={form.kbs} onChange={changeKbs} error={fieldError("knowledgeBases")} />
         <div className="space-y-2">
-          <p className="text-sm font-medium text-navy">Who reads these articles?</p>
+          <p className="text-sm font-medium text-navy">Which ServiceNow product?</p>
           <AudiencePicker value={form.audience} onChange={(audience) => set("audience", audience)} />
         </div>
         <ArticlePreview

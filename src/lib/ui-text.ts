@@ -45,8 +45,8 @@ export const TRIGGER_LABEL: Record<RunTrigger, string> = {
 };
 
 export const AUDIENCE: Record<Audience, { label: string; short: string; description: string }> = {
-  csm: { label: "Customers", short: "For customers", description: "Help articles for your customers, used by customer-facing bots and agents." },
-  itsm: { label: "Employees", short: "For employees", description: "Internal articles for your staff, used by IT and HR help desks." },
+  csm: { label: "CSM (Customer Service Management)", short: "CSM", description: "Articles for your customers, used by customer-facing bots and agents." },
+  itsm: { label: "ITSM (IT Service Management)", short: "ITSM", description: "Internal articles for your staff, used by IT and HR help desks." },
 };
 
 export const LINK_STYLES: ReadonlyArray<{ value: LinkStyle; label: string; path: string; description: string }> = [

@@ -287,7 +287,7 @@ export function NewSyncWizard() {
                 {kbs.length > 0 ? (
                   <>
                     <div className="space-y-3">
-                      <SectionHeading title="Who reads these articles?">
+                      <SectionHeading title="Which ServiceNow product?">
                         {suggestedAudience && !audienceOverride
                           ? "We picked this from where these knowledge bases are published. Change it if it's wrong."
                           : "Used to label the articles in Genesys Cloud and to suggest where links open."}
@@ -370,7 +370,7 @@ export function NewSyncWizard() {
                 <ReviewRow label="From">{connection?.name}</ReviewRow>
                 <ReviewRow label="Knowledge bases">{kbs.map((kb) => kb.title).join(", ")}</ReviewRow>
                 {filterSummary ? <ReviewRow label="Only">{filterSummary}</ReviewRow> : null}
-                <ReviewRow label="Readers">{AUDIENCE[audience].label}</ReviewRow>
+                <ReviewRow label="ServiceNow product">{AUDIENCE[audience].label}</ReviewRow>
                 <ReviewRow label="Goes to">{source.mode === "new" ? `New knowledge source "${source.name}"` : (existingSourceName ?? "An existing knowledge source")}</ReviewRow>
                 <ReviewRow label="Links open in">{linkStyleLabel(link.linkStyle, link.linkCustom)}</ReviewRow>
                 <ReviewRow label="Runs">{describeSchedule(schedule, { withTimeZone: true })}</ReviewRow>

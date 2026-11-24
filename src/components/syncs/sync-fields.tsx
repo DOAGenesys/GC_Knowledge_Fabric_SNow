@@ -134,7 +134,7 @@ export function AudiencePicker({ value, onChange }: { value: Audience; onChange:
   return (
     <ChoiceCards
       name="audience"
-      label="Who reads these articles?"
+      label="Which ServiceNow product?"
       value={value}
       onChange={onChange}
       options={[

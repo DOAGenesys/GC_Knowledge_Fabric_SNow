@@ -163,8 +163,8 @@ describe("ui text", () => {
     expect(PHASE_STEPS.flatMap((step) => step.phases)).toEqual(phases.filter((phase) => phase !== "done"));
     expect(LINK_STYLES.map((style) => style.value).sort()).toEqual(["classic", "csm", "csp", "custom", "esc", "sp"]);
     expect(Object.keys(AUTH_TYPES).sort()).toEqual(["apikey", "basic", "oauth"]);
-    expect(AUDIENCE.csm.short).toBe("For customers");
-    expect(AUDIENCE.itsm.label).toBe("Employees");
+    expect(AUDIENCE.csm.short).toBe("CSM");
+    expect(AUDIENCE.itsm.label).toBe("ITSM (IT Service Management)");
   });
 
   it("defaults links per audience", () => {

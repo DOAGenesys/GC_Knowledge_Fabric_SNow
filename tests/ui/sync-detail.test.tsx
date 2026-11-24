@@ -32,7 +32,7 @@ describe("SyncDetail header and status", () => {
     setup(makeSync());
     expect((await heading()).textContent).toBe("Customer Help");
     expect(screen.getByText("Healthy")).toBeTruthy();
-    expect(screen.getByText("For customers")).toBeTruthy();
+    expect(screen.getByText("CSM")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Full rebuild|Re-upload/ })).toBeNull();
     expect(screen.getByText("Acme production · Customer Service")).toBeTruthy();
     expect(screen.getByText("Every hour")).toBeTruthy();
@@ -507,7 +507,7 @@ describe("settings tab", () => {
     expect((screen.getByLabelText("Portal address") as HTMLInputElement).value).toBe(" help ");
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.getByText("Help portal", { selector: "p" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("radio", { name: /^Employees/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /^ITSM/ }));
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await screen.findByText("Settings saved");
     expect(api.callsTo("PUT", `/api/syncs/${SYNC_ID}`)[0]?.body).toMatchObject({ audience: "itsm", linkStyle: "custom", linkCustom: "help" });

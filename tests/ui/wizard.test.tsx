@@ -48,13 +48,13 @@ describe("NewSyncWizard", () => {
     expect(currentStep()).toContain("Articles");
 
     await screen.findByRole("checkbox", { name: /Customer Service/ });
-    expect(screen.getAllByText("For customers").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("CSM").length).toBeGreaterThan(0);
     fireEvent.click(continueButton());
     expect(screen.getByText("Pick at least one knowledge base.")).toBeTruthy();
 
     await pickKnowledge("Customer Service");
     expect(screen.getByText("We picked this from where these knowledge bases are published. Change it if it's wrong.")).toBeTruthy();
-    expect((screen.getByRole("radio", { name: /^Customers/ }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("radio", { name: /^CSM/ }) as HTMLInputElement).checked).toBe(true);
     expect(await screen.findByText(/published articles will be synced/, undefined, { timeout: 3_000 })).toBeTruthy();
     expect(await screen.findByText("Narrow it down")).toBeTruthy();
     expect(screen.getByText("All categories")).toBeTruthy();
@@ -72,7 +72,7 @@ describe("NewSyncWizard", () => {
     expect(currentStep()).toContain("Schedule");
     expect((screen.getByLabelText("Sync name") as HTMLInputElement).value).toBe("Customer Service");
     expect(within(summary()).getByText("Acme production")).toBeTruthy();
-    expect(within(summary()).getByText("Customers")).toBeTruthy();
+    expect(within(summary()).getByText("CSM (Customer Service Management)")).toBeTruthy();
     expect(within(summary()).queryByText("Only")).toBeNull();
     expect(within(summary()).getByText('New knowledge source "ServiceNow - Customer Service"')).toBeTruthy();
     expect(within(summary()).getByText("Customer Service Portal")).toBeTruthy();
@@ -101,7 +101,7 @@ describe("NewSyncWizard", () => {
   it("narrows by category and language, adds a ServiceNow condition, and uses an existing source with another portal", async () => {
     const api = setup({ "POST /api/syncs": { body: { sync: makeSync({ id: "new-sync" }), run: null, runError: null } } });
     await pickKnowledge("Customer Service", "Billing");
-    fireEvent.click(screen.getByRole("radio", { name: /^Employees/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /^ITSM/ }));
     expect(screen.getByText("Used to label the articles in Genesys Cloud and to suggest where links open.")).toBeTruthy();
 
     const categories = await openChecklist("Categories");
@@ -397,7 +397,7 @@ describe("NewSyncWizard", () => {
     await pickKnowledge("Customer Service");
     fireEvent.change(select, { target: { value: broken.id } });
     expect(await screen.findByRole("checkbox", { name: /Broken KB/ })).toHaveProperty("checked", false);
-    expect(screen.queryByText("Who reads these articles?")).toBeNull();
+    expect(screen.queryByText("Which ServiceNow product?")).toBeNull();
     expect(api.callsTo("GET", `/api/connections/${broken.id}/knowledge-bases`)).toHaveLength(1);
   });
 });
