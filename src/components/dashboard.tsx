@@ -177,7 +177,7 @@ function AttentionBanner({ syncs }: { syncs: SyncDTO[] }) {
 export function Dashboard() {
   const session = useSessionInfo();
   const syncsQuery = useSyncs();
-  const { syncNow, pending } = useSyncNow();
+  const { syncNow, pending, removalDialog } = useSyncNow();
   const syncs = syncsQuery.data?.syncs ?? [];
   const attention = syncs.filter((sync) => !sync.activeRun && (sync.health === "error" || sync.health === "warning"));
   const setup = session.data?.setup;
@@ -215,6 +215,7 @@ export function Dashboard() {
                 <SyncCard key={sync.id} sync={sync} onSyncNow={(item) => void syncNow(item)} syncing={pending === sync.id} />
               ))}
             </div>
+            {removalDialog}
           </section>
         </>
       ) : syncsQuery.data && setup && setup.connections > 0 && setup.gcCredentials === "ok" ? (

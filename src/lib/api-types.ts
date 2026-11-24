@@ -1,5 +1,5 @@
 import type { ErrorCode } from "./errors";
-import type { SyncFilters } from "./filters";
+import type { ArticleChoice, SyncFilters } from "./filters";
 import type { Schedule } from "./schedule";
 
 export type Audience = "csm" | "itsm";
@@ -187,7 +187,23 @@ export interface ArticlePage {
   counts: Record<ArticleState, number>;
 }
 
+/** What the next run would do to the articles in Genesys Cloud. */
+export interface RemovalImpactDTO {
+  /** Articles in Genesys Cloud now that the run would remove. */
+  removals: number;
+  sample: Array<{ number: string; title: string }>;
+  /** Articles the run would add. */
+  additions: number;
+  /**
+   * When checking hand-picked articles: the removed ones that are still published in the chosen
+   * knowledge bases, so choosing them again keeps them.
+   */
+  keep?: ArticleChoice[];
+}
+
 export interface RunNowResult {
-  outcome: "started" | "up_to_date" | "already_running";
+  /** `confirm_removals`: nothing started, because the run would remove articles and that wasn't allowed. */
+  outcome: "started" | "up_to_date" | "already_running" | "confirm_removals";
   run: RunDTO | null;
+  impact?: RemovalImpactDTO;
 }

@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Dashboard } from "@/components/dashboard";
 import { errorBody, mockApi } from "./helpers/api";
@@ -69,6 +69,26 @@ describe("Dashboard", () => {
     expect(call?.body).toEqual({ mode: "incremental" });
     expect(call?.headers.get("x-csrf-token")).toBe("test-csrf-token");
     await waitFor(() => expect(api.callsTo("GET", "/api/syncs").length).toBeGreaterThan(1));
+  });
+
+  it("asks before a sync from a card removes articles", async () => {
+    const impact = { removals: 2, sample: [{ number: "KB0010001", title: "Reset your password" }, { number: "KB0010002", title: "Change your plan" }], additions: 0 };
+    const api = mockApi({
+      "GET /api/session": { body: makeSession() },
+      "GET /api/syncs": { body: { syncs: [healthy] } },
+      "POST /api/syncs/:id/run": (call) =>
+        (call.body as { allowRemovals?: boolean }).allowRemovals
+          ? { body: { outcome: "started", run: makeRun({ status: "queued", phase: "queued" }) } }
+          : { body: { outcome: "confirm_removals", run: null, impact } },
+    });
+    renderUi(<Dashboard />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sync now" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Remove 2 articles from Genesys Cloud?")).toBeTruthy();
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Sync and remove them" })));
+    expect(await screen.findByText("Sync started")).toBeTruthy();
+    expect(api.callsTo("POST", `/api/syncs/${healthy.id}/run`).at(-1)?.body).toEqual({ mode: "incremental", allowRemovals: true });
   });
 
   it.each([

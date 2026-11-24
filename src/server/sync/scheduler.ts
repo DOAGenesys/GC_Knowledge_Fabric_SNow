@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getRun } from "workflow/api";
 import { WorkflowRunNotFoundError } from "workflow/errors";
-import type { RunTrigger } from "@/lib/api-types";
+import type { RemovalImpactDTO, RunTrigger } from "@/lib/api-types";
 import { AppError, toErrorRecord } from "@/lib/errors";
 import { computeNextRun, nextRunAfterFailure } from "@/lib/schedule";
 import { type Logger, scopedLogger } from "../log";
@@ -12,6 +12,7 @@ import { articleFilters, listArticleSummaries } from "../servicenow/knowledge";
 import { resolveConnectionById } from "../services/connections";
 import { finishRun } from "./engine";
 import { computeConfigHash, computeFingerprint } from "./fingerprint";
+import { removalImpact } from "./impact";
 import { startRun } from "./runner";
 
 const log = scopedLogger("sync.scheduler");
@@ -26,21 +27,24 @@ let lastIdleHeartbeatAt = 0;
 export type CheckOutcome =
   | { outcome: "started" | "already_running"; run: RunRow }
   | { outcome: "up_to_date"; run: RunRow | null; articleCount: number }
+  | { outcome: "confirm_removals"; impact: RemovalImpactDTO }
   | { outcome: "failed"; run: RunRow };
 
 /**
  * Cheap change detection before starting a workflow: list article ids + update stamps and
  * compare with the fingerprint of the last good run. Unchanged syncs cost one API call.
+ * With `confirmRemovals`, a run that would remove articles from Genesys Cloud isn't started.
  */
 export async function checkSync(
   sync: SyncRow,
-  options: { trigger: RunTrigger; requestedBy: string | null; recordNoop: boolean; logger?: Logger },
+  options: { trigger: RunTrigger; requestedBy: string | null; recordNoop: boolean; confirmRemovals?: boolean; logger?: Logger },
 ): Promise<CheckOutcome> {
   const logger = (options.logger ?? log).child({ syncId: sync.id, orgId: sync.orgId });
   const startedAt = new Date();
   let fingerprint: string;
   let articleCount: number;
   let issues: number;
+  let impact: RemovalImpactDTO | null = null;
   try {
     const connection = await resolveConnectionById(sync.connectionId);
     const articles = await listArticleSummaries(connection, { kbIds: sync.kbIds, filter: articleFilters(sync.filters, sync.filterQuery) }, logger);
@@ -48,6 +52,7 @@ export async function checkSync(
     fingerprint = computeFingerprint(articles, configHash);
     articleCount = articles.length;
     issues = await countManifestIssues(sync.id);
+    if (options.confirmRemovals) impact = await removalImpact(sync.id, articles);
   } catch (error) {
     const record = toErrorRecord(error);
     const failures = sync.consecutiveFailures + 1;
@@ -92,6 +97,11 @@ export async function checkSync(
     }
     logger.debug("Sync is up to date", { articles: articleCount });
     return { outcome: "up_to_date", run, articleCount };
+  }
+
+  if (impact && impact.removals > 0) {
+    logger.info("Run held for confirmation", { removals: impact.removals, additions: impact.additions });
+    return { outcome: "confirm_removals", impact };
   }
 
   const result = await startRun({ sync, trigger: options.trigger, mode: "incremental", requestedBy: options.requestedBy });

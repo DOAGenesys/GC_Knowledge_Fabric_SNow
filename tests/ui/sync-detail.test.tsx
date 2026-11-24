@@ -1,11 +1,21 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { SyncDetail } from "@/components/syncs/sync-detail";
-import type { ArticleDTO, RunDTO, SyncDTO } from "@/lib/api-types";
+import type { ArticleDTO, RemovalImpactDTO, RunDTO, SyncDTO } from "@/lib/api-types";
 import { errorBody, mockApi, type Route } from "./helpers/api";
 import { CONNECTION_ID, makeArticle, makeArticlePage, makeConnection, makeFilterOptions, makeKb, makeRun, makeSession, makeSync, minutesAhead, SYNC_ID } from "./helpers/fixtures";
 import { navigation } from "./helpers/navigation";
 import { renderUi } from "./helpers/render";
+
+const NO_REMOVALS: RemovalImpactDTO = { removals: 0, sample: [], additions: 0 };
+const REMOVALS: RemovalImpactDTO = {
+  removals: 7,
+  sample: [
+    { number: "KB0010001", title: "Reset your password" },
+    { number: "KB0010002", title: "Change your plan" },
+  ],
+  additions: 3,
+};
 
 function setup(initial: SyncDTO, extra: Record<string, Route> = {}) {
   const state = { sync: initial };
@@ -17,6 +27,7 @@ function setup(initial: SyncDTO, extra: Record<string, Route> = {}) {
     "GET /api/connections/:id/knowledge-bases": { body: { knowledgeBases: [makeKb(), makeKb({ id: "kb-2", title: "Billing", description: "", portals: [], suggestedAudience: null, articleCount: null })] } },
     "POST /api/connections/:id/preview": { body: { preview: { count: 44, sample: [] } } },
     "GET /api/connections/:id/filter-options": { body: { options: makeFilterOptions() } },
+    "POST /api/syncs/:id/impact": { body: { impact: NO_REMOVALS } },
     "GET /api/syncs": () => ({ body: { syncs: [state.sync] } }),
     "GET /api/session": { body: makeSession() },
     ...extra,
@@ -83,6 +94,43 @@ describe("SyncDetail header and status", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
     expect(await screen.findByText("Already up to date")).toBeTruthy();
     expect(api.callsTo("POST", `/api/syncs/${SYNC_ID}/run`)[0]?.body).toEqual({ mode: "incremental" });
+  });
+
+  it("asks before a sync that removes articles, and runs it once confirmed", async () => {
+    const { api } = setup(makeSync(), {
+      "POST /api/syncs/:id/run": (call) =>
+        (call.body as { allowRemovals?: boolean }).allowRemovals
+          ? { body: { outcome: "started", run: makeRun({ status: "queued", phase: "queued" }) } }
+          : { body: { outcome: "confirm_removals", run: null, impact: REMOVALS } },
+    });
+    await heading();
+    fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Remove 7 articles from Genesys Cloud?")).toBeTruthy();
+    expect(within(dialog).getByText(/no longer match this sync's settings, or they're no longer published in ServiceNow/)).toBeTruthy();
+    const list = within(dialog).getByRole("list", { name: "Articles that would be removed" });
+    expect(within(list).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["KB0010001 Reset your password", "KB0010002 Change your plan", "and 5 more articles"]);
+    expect(within(dialog).getByText("It also adds 3 new articles.")).toBeTruthy();
+    expect(screen.queryByText("Sync started")).toBeNull();
+
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Sync and remove them" })));
+    expect(await screen.findByText("Sync started")).toBeTruthy();
+    expect(api.callsTo("POST", `/api/syncs/${SYNC_ID}/run`).map((call) => call.body)).toEqual([{ mode: "incremental" }, { mode: "incremental", allowRemovals: true }]);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("starts nothing when the removal is cancelled", async () => {
+    const { api } = setup(makeSync(), { "POST /api/syncs/:id/run": { body: { outcome: "confirm_removals", run: null, impact: { ...REMOVALS, removals: 1, sample: REMOVALS.sample.slice(0, 1), additions: 0 } } } });
+    await heading();
+    fireEvent.click(screen.getByRole("button", { name: "Sync now" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Remove 1 article from Genesys Cloud?")).toBeTruthy();
+    expect(within(dialog).queryByText(/It also adds/)).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.callsTo("POST", `/api/syncs/${SYNC_ID}/run`)).toHaveLength(1);
   });
 
   it("shows live progress and cancels the active run", async () => {
@@ -405,6 +453,126 @@ describe("settings tab", () => {
     expect((await heading()).textContent).toBe("Customer Help EU");
   });
 
+  it("asks before saving settings that remove articles from Genesys Cloud", async () => {
+    const { api, state } = setup(makeSync(), {
+      "POST /api/syncs/:id/impact": { body: { impact: REMOVALS } },
+      "PUT /api/syncs/:id": (call) => {
+        state.sync = { ...state.sync, filterQuery: (call.body as { filterQuery: string }).filterQuery };
+        return { body: { sync: state.sync } };
+      },
+    });
+    await openSettings();
+    fireEvent.click(screen.getByRole("button", { name: /Add a ServiceNow condition/ }));
+    fireEvent.change(screen.getByLabelText(/ServiceNow condition/), { target: { value: " short_descriptionLIKEvpn " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Remove 7 articles from Genesys Cloud?")).toBeTruthy();
+    expect(within(dialog).getByText(/the new settings leave them out, so the next run removes them/)).toBeTruthy();
+    expect(within(dialog).getByText(/To keep them, include them in the settings too/)).toBeTruthy();
+    expect(api.callsTo("POST", `/api/syncs/${SYNC_ID}/impact`)[0]?.body).toEqual({
+      connectionId: CONNECTION_ID,
+      knowledgeBases: [{ id: "kb-1" }],
+      filters: { categories: [], languages: [], articles: null },
+      filterQuery: "short_descriptionLIKEvpn",
+    });
+    expect(api.callsTo("PUT", `/api/syncs/${SYNC_ID}`)).toHaveLength(0);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(api.callsTo("PUT", `/api/syncs/${SYNC_ID}`)).toHaveLength(0);
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(api.callsTo("POST", `/api/syncs/${SYNC_ID}/impact`)).toHaveLength(2));    await act(async () => fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Save and remove them" })));
+    expect(await screen.findByText("Settings saved")).toBeTruthy();
+    expect((api.callsTo("PUT", `/api/syncs/${SYNC_ID}`)[0]?.body as { filterQuery: string }).filterQuery).toBe("short_descriptionLIKEvpn");
+  });
+
+  it("keeps the articles that would be removed and adds the new ones in one click", async () => {
+    const chosen = [
+      { number: "KB0010001", title: "Reset your password", kbId: "kb-1" },
+      { number: "KB0010002", title: "Change your plan", kbId: "kb-1" },
+    ];
+    const { api, state } = setup(makeSync({ filters: { categories: [], languages: [], articles: chosen } }), {
+      "POST /api/connections/:id/preview": { body: { preview: { count: 2, sample: [], missing: [] } } },
+      "POST /api/syncs/:id/impact": (call) => {
+        const { filters } = call.body as { filters: SyncDTO["filters"] };
+        const kept = filters.articles?.some((article) => article.number === "KB0010001");
+        return { body: { impact: kept ? NO_REMOVALS : { removals: 1, sample: [chosen[0]], additions: 0, keep: [chosen[0]] } } };
+      },
+      "PUT /api/syncs/:id": (call) => {
+        state.sync = { ...state.sync, filters: (call.body as { filters: SyncDTO["filters"] }).filters };
+        return { body: { sync: state.sync } };
+      },
+    });
+    await openSettings();
+    fireEvent.click(screen.getByRole("button", { name: "Remove KB0010001" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Remove 1 article from Genesys Cloud?")).toBeTruthy();
+    expect(within(dialog).queryByText(/To keep them, include them/)).toBeNull();
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Keep them and add the new ones" })));
+
+    expect(await screen.findByText("Settings saved")).toBeTruthy();
+    expect(api.callsTo("POST", `/api/syncs/${SYNC_ID}/impact`)).toHaveLength(1);
+    expect((api.callsTo("PUT", `/api/syncs/${SYNC_ID}`)[0]?.body as { filters: unknown }).filters).toEqual({ categories: [], languages: [], articles: [chosen[1], chosen[0]] });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("says when only some articles can be kept, and asks again about the rest", async () => {
+    const chosen = [{ number: "KB0010005", title: "New article", kbId: "kb-1" }];
+    const keep = { number: "KB0010001", title: "Reset your password", kbId: "kb-1" };
+    const { api } = setup(makeSync({ filters: { categories: [], languages: [], articles: chosen } }), {
+      "POST /api/connections/:id/preview": { body: { preview: { count: 1, sample: [], missing: [] } } },
+      "POST /api/syncs/:id/impact": (call) => {
+        const { filters } = call.body as { filters: SyncDTO["filters"] };
+        return filters.articles?.some((article) => article.number === keep.number)
+          ? { body: { impact: { removals: 2, sample: REMOVALS.sample.slice(1), additions: 0, keep: [] } } }
+          : { body: { impact: { ...REMOVALS, removals: 3, additions: 0, keep: [keep] } } };
+      },
+    });
+    await openSettings();
+    fireEvent.click(screen.getByRole("button", { name: /Add a ServiceNow condition/ }));
+    fireEvent.change(screen.getByLabelText(/ServiceNow condition/), { target: { value: "active=true" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    let dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Only 1 of them can be kept. The other 2 aren't published in ServiceNow right now, or they're in a knowledge base you didn't pick.")).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Keep them and add the new ones" }));
+
+    await waitFor(() => expect(api.callsTo("POST", `/api/syncs/${SYNC_ID}/impact`)).toHaveLength(2));
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Remove 2 articles from Genesys Cloud?")).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: "Keep them and add the new ones" })).toBeNull();
+    expect(within(dialog).getByText(/To keep them, include them in the settings too/)).toBeTruthy();
+    expect(within(screen.getByRole("list", { name: "Chosen articles" })).getAllByRole("listitem")).toHaveLength(2);
+    expect(api.callsTo("PUT", `/api/syncs/${SYNC_ID}`)).toHaveLength(0);
+  });
+
+  it("saves without asking when the check fails or only other settings change", async () => {
+    const { api, state } = setup(makeSync(), {
+      "POST /api/syncs/:id/impact": { status: 502, body: errorBody("SN_UNREACHABLE", "No answer.") },
+      "PUT /api/syncs/:id": (call) => {
+        const body = call.body as { name: string; knowledgeBases: Array<{ id: string; title: string }> };
+        state.sync = { ...state.sync, name: body.name, kbIds: body.knowledgeBases.map((kb) => kb.id), kbNames: body.knowledgeBases.map((kb) => kb.title) };
+        return { body: { sync: state.sync } };
+      },
+    });
+    await openSettings();
+    fireEvent.change(screen.getByLabelText("Sync name"), { target: { value: "Renamed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("Settings saved")).toBeTruthy();
+    expect(api.callsTo("POST", `/api/syncs/${SYNC_ID}/impact`)).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Billing/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(api.callsTo("PUT", `/api/syncs/${SYNC_ID}`)).toHaveLength(2));
+    expect(api.callsTo("POST", `/api/syncs/${SYNC_ID}/impact`)).toHaveLength(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("discards changes", async () => {
     setup(makeSync());
     await openSettings();
@@ -611,6 +779,24 @@ describe("settings tab", () => {
     expect(await screen.findByText("Full re-upload started")).toBeTruthy();
     expect(api.callsTo("POST", `/api/syncs/${SYNC_ID}/run`)[0]?.body).toEqual({ mode: "full" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("says which articles a re-upload would remove", async () => {
+    const { api } = setup(makeSync(), {
+      "POST /api/syncs/:id/impact": { body: { impact: REMOVALS } },
+      "POST /api/syncs/:id/run": { body: { outcome: "started", run: makeRun({ status: "queued", phase: "queued", mode: "full" }) } },
+    });
+    await openSettings();
+    fireEvent.click(screen.getByRole("button", { name: "Re-upload all articles" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Checking whether any articles would be removed…")).toBeTruthy();
+    expect(await within(dialog).findByText("7 articles in Genesys Cloud no longer match this sync's settings and will be removed:")).toBeTruthy();
+    expect(within(dialog).queryByText("Checking whether any articles would be removed…")).toBeNull();
+    expect(within(within(dialog).getByRole("list", { name: "Articles that would be removed" })).getAllByRole("listitem")).toHaveLength(3);
+    expect(api.callsTo("POST", `/api/syncs/${SYNC_ID}/impact`)[0]?.body).toEqual({ mode: "full" });
+
+    await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "Re-upload and remove them" })));
+    expect(await screen.findByText("Full re-upload started")).toBeTruthy();
   });
 
   it("keeps the re-upload dialog open when the run can't start", async () => {

@@ -13,6 +13,7 @@ import * as health from "@/app/api/health/route";
 import * as sessionInfo from "@/app/api/session/route";
 import * as articles from "@/app/api/syncs/[id]/articles/route";
 import * as syncRoute from "@/app/api/syncs/[id]/route";
+import * as syncImpact from "@/app/api/syncs/[id]/impact/route";
 import * as syncRun from "@/app/api/syncs/[id]/run/route";
 import * as runCancel from "@/app/api/syncs/[id]/runs/[runId]/cancel/route";
 import * as runDetail from "@/app/api/syncs/[id]/runs/[runId]/route";
@@ -222,6 +223,7 @@ describe("authentication and request safety", () => {
 
     expect((await intruder.call(syncRoute.GET, `/api/syncs/${sync.id}`, { params: { id: sync.id } })).status).toBe(404);
     expect((await intruder.call(syncRun.POST, `/api/syncs/${sync.id}/run`, { method: "POST", params: { id: sync.id }, body: {} })).status).toBe(404);
+    expect((await intruder.call(syncImpact.POST, `/api/syncs/${sync.id}/impact`, { method: "POST", params: { id: sync.id }, body: {} })).status).toBe(404);
     expect((await intruder.call(syncRoute.DELETE, `/api/syncs/${sync.id}`, { method: "DELETE", params: { id: sync.id } })).status).toBe(404);
     expect((await intruder.call(connection.DELETE, `/api/connections/${sync.connection.id}`, { method: "DELETE", params: { id: sync.connection.id } })).status).toBe(404);
     expect((await intruder.call(syncs.GET, "/api/syncs")).body.syncs).toEqual([]);

@@ -164,8 +164,18 @@ describe("incremental runs", () => {
   it("deletes files for articles that were retired or unpublished", async () => {
     const { articles, sync, source } = await syncedWorld();
     world.sn.updateArticle(articles[0]!.sys_id, { workflow_state: "retired" });
+    const startedBefore = harness.runs.length;
 
-    const result = await runSyncNow(world.actor, sync.id, "incremental");
+    const held = await runSyncNow(world.actor, sync.id, "incremental");
+    expect(held).toEqual({
+      outcome: "confirm_removals",
+      run: null,
+      impact: { removals: 1, sample: [{ number: articles[0]!.number, title: articles[0]!.short_description }], additions: 0 },
+    });
+    expect(harness.runs.length).toBe(startedBefore);
+    expect(source.files.size).toBe(3);
+
+    const result = await runSyncNow(world.actor, sync.id, "incremental", { allowRemovals: true });
     await world.runWorkflows();
 
     expect(await world.run(result.run!.id)).toMatchObject({ status: "succeeded", plannedDeletions: 1, deleted: 1, uploaded: 0 });
@@ -227,7 +237,8 @@ describe("incremental runs", () => {
       enabled: true,
     });
 
-    const result = await runSyncNow(world.actor, sync.id, "incremental");
+    expect((await runSyncNow(world.actor, sync.id, "incremental")).impact).toMatchObject({ removals: 2, additions: 0 });
+    const result = await runSyncNow(world.actor, sync.id, "incremental", { allowRemovals: true });
     await world.runWorkflows();
 
     expect(await world.run(result.run!.id)).toMatchObject({ status: "succeeded", deleted: 2, uploaded: 1 });

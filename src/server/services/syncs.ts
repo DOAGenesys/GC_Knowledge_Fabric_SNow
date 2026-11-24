@@ -1,18 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { ArticlePage, ArticleState, RunDetailDTO, RunDTO, RunNowResult, SyncDTO } from "@/lib/api-types";
+import type { ArticlePage, ArticleState, RemovalImpactDTO, RunDetailDTO, RunDTO, RunMode, RunNowResult, SyncDTO } from "@/lib/api-types";
 import { AppError, ERROR_CATALOG, isErrorCode } from "@/lib/errors";
-import { filtersSchema, noFilters, sameFilters } from "@/lib/filters";
+import { filtersSchema, MAX_CHOSEN_ARTICLES, noFilters, sameFilters } from "@/lib/filters";
 import { computeNextRun, scheduleSchema } from "@/lib/schedule";
 import { getSource, createFileUploadSource, type GcSource } from "../genesys/knowledge";
 import { listArticles, listRunItems, type RunItemStatus } from "../repo/items";
 import { getActiveRun, getRunForOrg, listRuns, type RunRow, toRunDTO } from "../repo/runs";
 import { deleteSync, findSyncBySource, getSync, getSyncDTO, insertSync, listSyncDTOs, type SyncRow, updateSyncSettings } from "../repo/syncs";
-import { validateFilterQuery } from "../servicenow/knowledge";
+import { articleFilters, listArticleSummaries, lookupArticles, validateFilterQuery } from "../servicenow/knowledge";
+import { planRemovals, toImpact } from "../sync/impact";
 import { cancelRun, startRun } from "../sync/runner";
 import { checkSync } from "../sync/scheduler";
 import type { ActorContext } from "./actor";
-import { requireConnection } from "./connections";
+import { requireConnection, resolveConnection } from "./connections";
 import { getOrgGcAuth } from "./genesys";
 
 const SYS_ID = /^[0-9a-f]{32}$/;
@@ -215,8 +216,11 @@ export async function removeSync(actor: ActorContext, id: string): Promise<void>
   actor.log.info("Sync deleted", { syncId: id, sourceId: sync.sourceId });
 }
 
-/** "Sync now": a quick change check first (instant "up to date"), or a full rebuild on request. */
-export async function runSyncNow(actor: ActorContext, id: string, mode: "incremental" | "full"): Promise<RunNowResult> {
+/**
+ * "Sync now": a quick change check first (instant "up to date"), or a full rebuild on request.
+ * A normal run that would remove articles from Genesys Cloud only starts with `allowRemovals`.
+ */
+export async function runSyncNow(actor: ActorContext, id: string, mode: RunMode, options: { allowRemovals?: boolean } = {}): Promise<RunNowResult> {
   const sync = await requireSync(actor, id);
   const active = await getActiveRun(sync.id);
   if (active) return { outcome: "already_running", run: toRunDTO(active) };
@@ -226,7 +230,14 @@ export async function runSyncNow(actor: ActorContext, id: string, mode: "increme
     return { outcome: result.outcome, run: toRunDTO(result.run) };
   }
 
-  const result = await checkSync(sync, { trigger: "manual", requestedBy: actor.userName, recordNoop: true, logger: actor.log });
+  const result = await checkSync(sync, {
+    trigger: "manual",
+    requestedBy: actor.userName,
+    recordNoop: true,
+    confirmRemovals: !options.allowRemovals,
+    logger: actor.log,
+  });
+  if (result.outcome === "confirm_removals") return { outcome: "confirm_removals", run: null, impact: result.impact };
   if (result.outcome === "failed") {
     const code = result.run.errorCode && isErrorCode(result.run.errorCode) ? result.run.errorCode : "INTERNAL";
     throw new AppError(code, {
@@ -236,6 +247,60 @@ export async function runSyncNow(actor: ActorContext, id: string, mode: "increme
     });
   }
   return { outcome: result.outcome, run: result.run ? toRunDTO(result.run) : null };
+}
+
+/** Settings to check before saving them. Anything left out is the sync's saved value. */
+export const impactSchema = z.object({
+  mode: z.enum(["incremental", "full"]).default("incremental"),
+  connectionId: z.string().uuid("Pick a ServiceNow connection").optional(),
+  knowledgeBases: z
+    .array(z.object({ id: z.string().regex(SYS_ID, "Invalid knowledge base") }))
+    .min(1, "Pick at least one knowledge base")
+    .max(25, "Pick at most 25 knowledge bases")
+    .optional(),
+  filters: filtersSchema.optional(),
+  filterQuery: z
+    .string()
+    .max(5000)
+    .superRefine((value, ctx) => {
+      const problem = validateFilterQuery(value);
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
+    })
+    .optional(),
+});
+
+export type ImpactInput = z.infer<typeof impactSchema>;
+
+/** Which articles in Genesys Cloud the next run would remove, with the saved settings or the ones given. */
+export async function previewSyncImpact(actor: ActorContext, id: string, input: ImpactInput): Promise<RemovalImpactDTO> {
+  const sync = await requireSync(actor, id);
+  const connection = resolveConnection(await requireConnection(actor, input.connectionId ?? sync.connectionId));
+  const filters = input.filters ?? sync.filters;
+  if (filters.articles?.length === 0) return { removals: 0, sample: [], additions: 0 };
+  const kbIds = input.knowledgeBases?.map((kb) => kb.id) ?? sync.kbIds;
+  const articles = await listArticleSummaries(
+    connection,
+    { kbIds, filter: articleFilters(filters, input.filterQuery === undefined ? sync.filterQuery : normalizedFilter(input.filterQuery)) },
+    actor.log,
+  );
+  const plan = await planRemovals(sync.id, articles, input.mode);
+  const impact = toImpact(plan);
+  if (filters.articles && plan.removed.length > 0 && filters.articles.length + plan.removed.length <= MAX_CHOSEN_ARTICLES) {
+    const chosen = new Set(filters.articles.map((article) => article.number.toUpperCase()));
+    const { found } = await lookupArticles(connection, { kbIds, refs: plan.removed.map((item) => item.articleId) }, actor.log);
+    impact.keep = found
+      .filter((article) => !chosen.has(article.number.toUpperCase()))
+      .map((article) => ({ number: article.number, title: article.title, kbId: article.kbId }));
+  }
+  actor.log.info("Removal check", {
+    syncId: id,
+    mode: input.mode,
+    articles: articles.length,
+    removals: impact.removals,
+    additions: impact.additions,
+    keepable: impact.keep?.length ?? null,
+  });
+  return impact;
 }
 
 export async function cancelSyncRun(actor: ActorContext, syncId: string, runId: string): Promise<RunDTO> {

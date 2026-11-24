@@ -228,6 +228,17 @@ export async function loadManifest(syncId: string): Promise<ManifestEntry[]> {
   }));
 }
 
+export async function listManifestLabels(syncId: string): Promise<Array<{ articleId: string; number: string; title: string; state: ArticleState }>> {
+  const database = await db();
+  const rows = await database.query("SELECT article_id, number, title, file_name, state FROM sync_items WHERE sync_id = $1", [syncId]);
+  return rows.map((row) => ({
+    articleId: String(row.article_id),
+    number: String(row.number ?? ""),
+    title: String(row.title || row.file_name || ""),
+    state: row.state as ArticleState,
+  }));
+}
+
 export async function countManifestIssues(syncId: string): Promise<number> {
   const database = await db();
   const rows = await database.query<{ count: number }>(

@@ -117,7 +117,8 @@ describe("syncing hand-picked articles", () => {
     expect([...source.files.keys()].sort()).toEqual(all.slice(0, 4).map(fileNameOf).sort());
 
     response = await browser.call(syncRoute.PUT, `/api/syncs/${syncId}`, { method: "PUT", params: { id: syncId }, body: syncBody({ articles: all.slice(1, 4).map(choice) }) });
-    const third = await runSyncNow(world.actor, syncId, "incremental");
+    expect((await runSyncNow(world.actor, syncId, "incremental")).outcome).toBe("confirm_removals");
+    const third = await runSyncNow(world.actor, syncId, "incremental", { allowRemovals: true });
     await world.runWorkflows();
     expect(await world.run(third.run!.id)).toMatchObject({ status: "succeeded", uploaded: 0, deleted: 1 });
     expect(source.files.has(fileNameOf(all[0]!))).toBe(false);

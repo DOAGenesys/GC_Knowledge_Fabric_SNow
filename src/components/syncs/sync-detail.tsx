@@ -88,7 +88,7 @@ function Tile({ label, value, note }: { label: string; value: string; note?: str
 
 export function SyncDetail({ id }: { id: string }) {
   const { data, error, isLoading, mutate } = useSync(id);
-  const { syncNow, pending } = useSyncNow();
+  const { syncNow, pending, removalDialog } = useSyncNow();
   const cancelRun = useCancelRun();
   const refresh = useRefreshSync();
   const toast = useToast();
@@ -192,6 +192,7 @@ export function SyncDetail({ id }: { id: string }) {
           </Button>
         </div>
       </div>
+      {removalDialog}
 
       <LastRunProblem
         sync={sync}
